@@ -451,7 +451,7 @@ def _is_rate_limit(error: BaseException) -> bool:
 
 
 def paced_urlopen(request: Request | str, *, timeout: float | None = None,
-                  opener=urlopen, sleeper=None, max_wait_s: float | None = None):
+                  opener=None, sleeper=None, max_wait_s: float | None = None):
     """:func:`urllib.request.urlopen` under the governor.
 
     Paces the request when it is bound for NOMADS, logs it when the
@@ -460,8 +460,16 @@ def paced_urlopen(request: Request | str, *, timeout: float | None = None,
     through, unpaced and unlogged, exactly as in the Rust client.
     ``max_wait_s`` is :func:`pace`'s: past it, nothing is sent and
     :class:`PaceBudgetExceeded` is raised.
+
+    Without an ``opener``, a bodiless probe (a HEAD, or the one-byte
+    confirming GET) is sent on a kept-alive connection
+    (:func:`gpuwm.probe_connections.probe_urlopen`); every other request
+    goes to :func:`urllib.request.urlopen` as before.
     """
 
+    if opener is None:
+        from gpuwm.probe_connections import probe_urlopen
+        opener = probe_urlopen
     url = request if isinstance(request, str) else request.full_url
     started = _now_ms()
     kind = "get"

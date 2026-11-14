@@ -997,9 +997,15 @@ _FIXED_MASS_RATES = (("dqv", "rqv"), ("dqc", "rqc"), ("dqr", "rqr"),
 #: state and geometry, so they run at the first phase 2 rather than on the
 #: seam's zero placeholder buffers.  Keyed by ``mp_physics``; a scheme
 #: without a row has no such step.
-# Both aerosol-aware Thompson members derive surface emissions from the
-# first real layer depth; placeholder geometry would divide by zero.
+# Every member of the aerosol-aware Thompson family derives its surface
+# emission from the first real layer depth; placeholder geometry would
+# divide by zero.  RCON (29) is a member (gpuwm.config
+# THOMPSON_AEROSOL_FAMILY) and had no row while its speed guard refused it
+# before any seam was built: without one its construction-time nwfa2d, an
+# infinity from the zero-depth placeholder layer, stayed on the state and
+# the lowest-level water-friendly aerosol was non-finite from step 0.
 _FIRST_CONTACT = {28: "_thompson_first_contact",
+                  29: "_thompson_first_contact",
                   38: "_thompson_first_contact",
                   900: "_tempo_first_contact"}
 

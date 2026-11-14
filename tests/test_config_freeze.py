@@ -343,6 +343,11 @@ def test_new_fields_are_reviewed_defaults_appended_last():
         field = RunConfig.__dataclass_fields__[name]
         assert field.kw_only and field.default == default, name
     names = [name for name in names if name not in _BATCH007_DEFAULTS]
+    # The lateral-boundary hydrometeor envelope (ARWEN item 10): 25 km, the
+    # constant every earlier run served with, keyword-only, appended last.
+    assert names.pop() == "lbc_hydrometeor_envelope_km"
+    assert RunConfig.__dataclass_fields__["lbc_hydrometeor_envelope_km"].default == 25.0
+    assert RunConfig.__dataclass_fields__["lbc_hydrometeor_envelope_km"].kw_only
     # Noah-MP opt_runsrf/opt_runsub split (re-implemented from published
     # descriptions): 0 inherits opt_run, keyword-only, appended last.
     for name in ("opt_runsub", "opt_runsrf"):
@@ -946,7 +951,10 @@ def _check_frozen_defaults(actual):
                          # Noah-MP snow compaction at WRF's fixed C_bd.
                          ("opt_snow_compact", 1),
                          # Noah-MP opt_runsrf/opt_runsub, stock pair at 0.
-                         ("opt_runsrf", 0), ("opt_runsub", 0)):
+                         ("opt_runsrf", 0), ("opt_runsub", 0),
+                         # The boundary hydrometeor envelope at the 25 km
+                         # every earlier run served with (ARWEN item 10).
+                         ("lbc_hydrometeor_envelope_km", 25.0)):
         assert actual.pop(field) == value, field
     for field,value in (("urban_ucm_generation","wrf_471"),("urban_treeoption",-1),
                         ("urban_ttscheme",-1),("urban_fvg",-1.),("urban_table_dir","")):

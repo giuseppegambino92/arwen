@@ -95,10 +95,11 @@ pub const NAMELIST_SUPPORT_SCHEMA: &str = "rw-wps.namelist-support.v1";
 /// way when the 3.0 port folds inventoried them (b2817cdc11a, 9846f70556b, 74abec86b8f, 13a5a66c5bc):
 /// every wrfinput member of the four is float32 on the 3-D stock shape, or
 /// the 2-D `ij` shape for RCON's qnwfa2d/qnifa2d pair exactly as mp=28's,
-/// so the frontend had no obstacle to cite.  mp=29's open speed proof
-/// (gpuwm/config.py RCON-SPEED-01) refuses an ArWen FORECAST with it; it is
-/// not a reason to refuse the stock-WRF initialization file this frontend
-/// certifies, which an unchanged WRF reads.
+/// so the frontend had no obstacle to cite.  mp=29's speed guard
+/// (gpuwm/config.py RCON-SPEED-01) refused an ArWen FORECAST with it in
+/// 3.0.0 and 3.0.1 and was retired in 3.0.2; it was never a reason to refuse
+/// the stock-WRF initialization file this frontend certifies, which an
+/// unchanged WRF reads.
 ///
 /// A new engine package arrives as a new id here plus whatever its members'
 /// shapes require, never as a silently narrowed export.

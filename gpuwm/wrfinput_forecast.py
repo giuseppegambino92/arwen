@@ -706,6 +706,39 @@ def prepare_wrf_run(run, directory: Path, *, run_seconds: float | None = None,
 surface_analyses=MappingProxyType(surface_analyses))
 
 
+def lake_plan_lines(run, *, restart=None):
+    """What each domain's lakes will start from, for plan review and the dry run.
+
+    The wrfinput files hold the lake mask the run starts on: the file's
+    own ``LAKEMASK`` for a domain that runs the lake model
+    (``sf_lake_physics = 1``, ``wrfinput_lake_physics_inputs``), and
+    otherwise ``LU_INDEX == ISLAKE``, what ``initialize_landuse`` below
+    makes the run's ``lakemask``.  So with ``lake_state_source = "auto"``
+    each line is the run's own decision on that domain's lake cells
+    (:func:`gpuwm.ingest.lake_state.input_plan_sentences`).  A WRF warm
+    start restores its lakes from the wrfrst files, as a checkpoint resume
+    does from its checkpoint (``skips_analysis_on_resume``), and either
+    is one line that names no request.
+
+    The resolved run is read as the door reads ``lake_state_note``: a
+    stand-in that carries no domains or no input files (the launcher's
+    unit tests hand the door one) has nothing to plan and gets no line.
+    A :class:`gpuwm.wrfinput_door.WrfinputRun` always carries both.
+    """
+    from gpuwm.ingest.lake_state import input_plan_sentences
+    experiment = getattr(run, 'experiment', None)
+    if not getattr(experiment, 'domains', None):
+        return []
+    if restart is None and getattr(run, 'restart_paths', None):
+        return input_plan_sentences(experiment, {}, latitude='XLAT', longitude='XLONG',
+                                    restart=True, resume_source='the WRF restart files (wrfrst)')
+    paths = getattr(run, 'wrfinput_paths', None)
+    if restart is None and not paths:
+        return []
+    return input_plan_sentences(experiment, paths or {}, latitude='XLAT', longitude='XLONG',
+                                lake_mask_record='LAKEMASK', restart=restart)
+
+
 def announce_wrf_substitutions(run, receipt_path):
     """Show the actual scheme changes; retain the full translator record.
 
@@ -923,6 +956,8 @@ def build_parser(*, prog=None):
     parser.add_argument('--soil-source', type=Path, default=None, metavar='DIR',
                         help='original met_em and producing Vtable directory for automatic soil recovery; defaults to the WRF input directory')
     parser.add_argument('--rrtmg-variant', choices=('rrtmg_legacy','rte-rrtmgp'), default=None, help='preserve WRF RRTMG by default; choose rte-rrtmgp explicitly to change radiation')
+    from gpuwm.ingest.lake_state import add_lake_state_arguments
+    add_lake_state_arguments(parser)
     parser.add_argument('--thompson-version', choices=('wrf_461','wrf_44'), default=None)
     parser.add_argument('--cu-gf-version', choices=('gfl_873b414','wrf_461'), default=None,
                         help="cu_physics=3: the previous pin GFDRV (default) or WRF v4.8.0 Grell-Freitas-Li")
@@ -991,7 +1026,7 @@ def run_wrf_forecast(directory, outdir, *, run_seconds=None, restart=None,
                      progress_options=None, relaunched=False, allow_shared_gpu=False,
                      output_owner=None, soil_source=None, ensemble_request=None,
                      restart_from=None, benchmark=False, analysis=None,
-                     checkpoint_at=None):
+                     checkpoint_at=None, lake_state=None, lake_state_path=None):
     import os
     import subprocess
     import sys
@@ -1064,7 +1099,19 @@ def run_wrf_forecast(directory, outdir, *, run_seconds=None, restart=None,
                                urban_ucm_generation=urban_ucm_generation, urban_controls=urban_controls,
                                cu_gf_version=cu_gf_version,
                                scheme_selectors=scheme_selectors,
+                               lake_state=lake_state, lake_state_path=lake_state_path,
                                **({} if thompson_version is None else {"thompson_version":thompson_version}))
+    lake_state_note = getattr(run, 'lake_state_note', None)
+    if lake_state_note is not None and not relaunched:
+        print(f'{DOOR}: {lake_state_note}.', flush=True)
+    # What the lakes will start from, at plan review, as the met_em door
+    # says it.  This door printed a lake line only when --lake-state was
+    # given, so a plain run (lake_state_source = "auto") learned whether
+    # GLSEA was asked only from the forecast's own line.  A --lake-state
+    # forcing or ROW choice printed its own line above and gets no second.
+    if not relaunched and (lake_state_note is None or lake_state == 'auto'):
+        for line in lake_plan_lines(run, restart=restart):
+            print(f'{DOOR}: {line}', flush=True)
     if run_seconds is not None:
         wrfinput_window_seconds(run, run_seconds)
     from gpuwm.tables import _ensure_for_load as ensure
@@ -1102,6 +1149,10 @@ def run_wrf_forecast(directory, outdir, *, run_seconds=None, restart=None,
                        '--_output-owner', output_claim.token]
             if rrtmg_variant is not None:
                 command += ['--rrtmg-variant', rrtmg_variant]
+            if lake_state is not None:
+                command += ['--lake-state', lake_state]
+            if lake_state_path is not None:
+                command += ['--lake-state-path', str(Path(lake_state_path).resolve())]
             if thompson_version is not None:
                 command += ['--thompson-version', thompson_version]
             if cu_gf_version is not None:
@@ -1287,6 +1338,7 @@ def main(argv=None, *, in_process=False, prog=None):
                                restart_from=args.restart_from, benchmark=args.benchmark,
                                analysis=analysis_request(args),
                                checkpoint_at=args.checkpoint_at,
+                               lake_state=args.lake_state, lake_state_path=args.lake_state_path,
                                **({} if request is None else {"ensemble_request": request.receipt()}))
     except (ValueError, OSError) as error:
         import sys

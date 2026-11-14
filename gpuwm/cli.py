@@ -121,12 +121,75 @@ def _check_geography(args) -> str | None:
         return None
 
 
+def _check_met_em_main(args) -> int:
+    """``gpuwm check --met-em DIR``: card memory from the met_em files alone.
+
+    Breakage (door item 3): an outside runner sized its met_em forecast by
+    importing the namelist pair to a TOML and checking that.  The TOML route
+    asks the WPS_GEOG tree for the geography a preparation would read, so on
+    a machine with no geography staged the check exited 6 and the runner
+    printed "does NOT fit" for a run that fits.  ``gpuwm run --met-em`` reads
+    no WPS_GEOG: the static fields are in the met_em files.  This door
+    resolves the directory with the run's own resolver
+    (:func:`gpuwm.metem_door.resolve_metem_run`, the same refusals at the
+    same plan review) and prices that experiment through the same memory
+    check, so the figure is the one ``gpuwm check CONFIG --vram-gib`` gives
+    for the imported pair at the directory's ``interval_seconds``.
+    """
+    import tempfile
+
+    door = f"gpuwm check: --met-em {args.met_em}"
+    if args.config is not None:
+        print("gpuwm check: give CONFIG or --met-em DIR, not both", file=sys.stderr)
+        return 2
+    if getattr(args, "prepared_root", None) is not None:
+        print(f"{door}: --prepared-root prices a prepared bundle; a met_em "
+              "directory is priced from its own files", file=sys.stderr)
+        return 2
+    from gpuwm.metem_door import resolve_metem_run
+
+    try:
+        run = resolve_metem_run(args.met_em)
+    except (ValueError, OSError) as error:
+        print(f"{door}: {error}", file=sys.stderr)
+        return 2
+    interval = float(run.interval_seconds)
+    if args.forcing_interval_s is None:
+        args.forcing_interval_s = interval
+    elif float(args.forcing_interval_s) != interval:
+        # The run is forced at the directory's cadence; another figure
+        # would price a run that does not happen.
+        print(f"{door}: --forcing-interval-s {args.forcing_interval_s:g} disagrees "
+              f"with the directory's interval_seconds = {interval:g}; omit it",
+              file=sys.stderr)
+        return 2
+    print(f"{door}: static fields come from the met_em files, so WPS_GEOG is "
+          f"not read; boundaries priced every {interval:g} s (namelist.input "
+          "interval_seconds)", file=sys.stderr)
+    args._geography_blocker = None
+    with tempfile.TemporaryDirectory(prefix="gpuwm-check-metem-") as scratch:
+        args.config = Path(scratch) / "met_em.toml"
+        args.config.write_text(run.toml_text, encoding="utf-8")
+        try:
+            ingest = args.ingest_preflight_handler(args)
+            if ingest:
+                return ingest
+            from gpuwm.surface_ocean import config_ocean_lines
+            for line in config_ocean_lines(args.config, prefix="gpuwm check: ocean: "):
+                print(line, file=sys.stderr)
+            return check_main(args)
+        finally:
+            args.config = None
+
+
 def combined_check_main(args):
     # Keep the verdict's origin for in-process configuration creators:
     # the memory check also uses exit 6 for a refused execution plan.
     args._geography_missing_only = False
+    if getattr(args, "met_em", None) is not None:
+        return _check_met_em_main(args)
     if args.config is None:
-        print('gpuwm check: CONFIG is required for preflight; bare inventory uses gpuwm check --json', file=sys.stderr)
+        print('gpuwm check: CONFIG or --met-em DIR is required for preflight; bare inventory uses gpuwm check --json', file=sys.stderr)
         return 2
     # A known source ceiling must refuse before ingest can decode files or
     # memory preflight can probe a GPU, even when those later legs cannot run.
@@ -142,11 +205,18 @@ def combined_check_main(args):
     if ingest:
         return ingest
     geography = _check_geography(args)
+    # The JSON report carries it beside the memory verdict (door item 3).
+    args._geography_blocker = geography
     if geography is not None:
         # Before the memory legs, the way go refuses before its fetch; on
         # stderr so `--json` stdout stays one document.
         print(f"gpuwm check: geography BLOCKER (exit {EXIT_GEOGRAPHY_MISSING} "
               "unless a memory leg fails harder): " + geography, file=sys.stderr)
+    # The plan states the ocean (door item 6), on stderr beside the other
+    # verdict lines so `--json` stdout stays one document.
+    from gpuwm.surface_ocean import config_ocean_lines
+    for line in config_ocean_lines(args.config, prefix="gpuwm check: ocean: "):
+        print(line, file=sys.stderr)
     code = check_main(args)
     if geography is not None and code == 0:
         args._geography_missing_only = True
@@ -496,6 +566,8 @@ def _register_run_parser(sub):
                           "Absent writes every scheduled checkpoint")
     run.add_argument("--products", dest="render_products", default=None,
                      help="WRF inputs: comma-separated map products, or none")
+    from gpuwm.verification_visuals import add_argument as add_verification_argument
+    add_verification_argument(run)
     run.add_argument("--benchmark", action="store_true",
                      help="WRF inputs: time the forecast as a benchmark. Draws no "
                           "products and runs no post-run verification, then prints "
@@ -508,6 +580,8 @@ def _register_run_parser(sub):
                      help="WRF inputs: original met_em and Vtable directory for automatic soil-water recovery; defaults to the input directory")
     run.add_argument("--rrtmg-variant", choices=("rrtmg_legacy", "rte-rrtmgp"), default=None,
                      help="WRF inputs: preserve legacy RRTMG by default; choose rte-rrtmgp to change radiation")
+    from gpuwm.ingest.lake_state import add_lake_state_arguments
+    add_lake_state_arguments(run, prefix="WRF and met_em inputs: ")
     run.add_argument("--thompson-version", choices=("wrf_461", "wrf_44"), default=None,
                      help="WRF inputs: override the classic Thompson generation selected from producer TITLE")
     run.add_argument("--urban-ucm-generation", choices=("wrf_471","wrf_480"), default=None)
@@ -954,7 +1028,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         print(f"gpuwm: {error}", file=sys.stderr)
         return 2
-    with explain_scope(False), licence_scope(_values(tokens, "--accept-licence")):
+    from gpuwm.verification_visuals import verification_scope
+    # None: `gpuwm run --no-verify-visuals` sets the variable for its routes
+    # in _dispatch_argv; this gives it back when the call returns.
+    with explain_scope(False), licence_scope(_values(tokens, "--accept-licence")), \
+            verification_scope(None):
         return _dispatch_argv(tokens)
 
 
@@ -1057,6 +1135,12 @@ def _dispatch_argv(argv: list[str] | None = None) -> int:
         from gpuwm.go_wrfinput import supplied_options
         args._supplied_go_options = supplied_options(_join_negative_coordinates(tokens[1:]))
     apply_history_compression(args)
+    if args.command == "run" and getattr(args, "verify_visuals", None) is False:
+        # Every route of `gpuwm run` (CONFIG through its supervised worker,
+        # --wrfinput, --met-em) reaches the finish hook through this
+        # variable, so the process environment carries the flag to all of
+        # them, worker processes included; main() gives it back on return.
+        os.environ["GPUWM_VERIFY_VISUALS"] = "0"
     if hasattr(args, "output_format"):
         from gpuwm.output_formats import options as output_options, require_binary
         try:
@@ -1094,6 +1178,12 @@ def _dispatch_argv(argv: list[str] | None = None) -> int:
             parser.error("--run-seconds is for --wrfinput or --met-em; set run_seconds in CONFIG")
         if args.rrtmg_variant is not None and args.config is not None:
             parser.error("--rrtmg-variant is for WRF inputs; set radiation in CONFIG")
+        if (args.lake_state is not None or args.lake_state_path is not None) and args.config is not None:
+            # Breakage it prevents: the CONFIG route reads its own
+            # lake_state_source key, so the flag would be read by nothing and
+            # the lake analysis would still be requested.
+            parser.error("--lake-state is for --wrfinput or --met-em; set lake_state_source "
+                         "(and lake_state_path) in CONFIG")
         if args.thompson_version is not None and (args.config is not None or args.met_em is not None):
             parser.error("--thompson-version is for WRF folders; set thompson_version in CONFIG")
         if getattr(args, "checkpoint_at", None) is not None and args.wrfinput is None:
@@ -1795,6 +1885,8 @@ def _dispatch_with_outputs(args) -> int:
                                health_debug=args.health_debug, gpu_uuid=args.gpu_uuid,
                                exclusive_gpu=not args.no_supervise,
                                rrtmg_variant=args.rrtmg_variant,
+                               **{key: getattr(args, key) for key in ("lake_state", "lake_state_path")
+                                  if getattr(args, key, None) is not None},
                                **({} if getattr(args,"thompson_version",None) is None else {"thompson_version":args.thompson_version}),
                                **({} if args.wrfinput is None else {"urban_ucm_generation":args.urban_ucm_generation,"urban_controls":urban_controls}),
                                allow_shared_gpu=args.allow_shared_gpu,

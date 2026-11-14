@@ -289,9 +289,11 @@ Takes no options of its own.
 
 ## `gpuwm check`
 
+`--met-em DIR` (in place of CONFIG) prices card memory from a WPS metgrid directory alone, the input of `gpuwm run --met-em`: it reads no WPS_GEOG, so a machine with no geography staged gets the memory verdict and not exit 6.  The boundaries are priced at the directory's namelist.input `interval_seconds`, and with `--vram-gib` the figure is the one `gpuwm check CONFIG --vram-gib` gives for the imported namelist pair.
+
 | argument | what it does |
 |---|---|
-| `[CONFIG]` | experiment TOML (or legacy RunConfig TOML, wrapped as a one-domain experiment); omit only for gpuwm check --json context-free box inventory |
+| `[CONFIG]` | experiment TOML (or legacy RunConfig TOML, wrapped as a one-domain experiment); omit only with --met-em DIR, or for gpuwm check --json context-free box inventory |
 
 | option | what it does |
 |---|---|
@@ -303,6 +305,7 @@ Takes no options of its own.
 | `--forcing-interval-s S` | override the configured or measured forcing cadence for memory sizing (otherwise defaults to ERA5 6-hourly) |
 | `--free-gib GIB` | declared free VRAM before reserves, as used by the domain wizard; estimate only |
 | `--json` | machine-readable report |
+| `--met-em DIR` | price a WPS metgrid directory (met_em.d0*.nc and the producing namelist.input), the input of `gpuwm run --met-em`, in place of CONFIG. Reads no WPS_GEOG: the met_em files carry the static fields |
 | `--no-host-memory-gate` | report the HOST RAM of the forcing decode, the CPU preparation and a streamed forecast but do not refuse on it. The counterpart of `gpuwm go --no-memory-gate` for the other budget: MemAvailable is a reading of this second, and a busy box can be momentarily short of RAM a run would have had |
 | `--prepared-root DIR` | verify prepared forecast inputs and price their land cover and retained boundary tables; bind a finished bundle or its live prepared head |
 | `--rail-mib MIB` | whole-machine device residency ceiling: the budget is additionally capped at RAIL minus what every other process on the card already holds (read from NVML before this process touches CUDA). A property of the host, so there is no default |
@@ -755,6 +758,9 @@ Takes no options of its own.
 | `--initial-inputs JSON` | a separate packaged analysis for the initial state (gpuwm prep --initial-inputs); the fetched source still supplies every lateral boundary, and the forecast starts at the preparation head while the later boundary times are built |
 | `--keep-checkpoints N` | how many complete checkpoint sets the run keeps in its folder (default 1, enough to resume); 0 keeps every hourly set, which a later branch or downscale from an earlier checkpoint needs |
 | `--keep-member-files` | also retain every member's full history files |
+| `--lake-ice {observed,wps}` | GFS route lake ice: observed (default) freezes lakes the IMS daily analysis sees frozen, fetched only when a domain has lakes; wps keeps the forcing's ice and fetches nothing. Written as [ingest] gfs_lake_ice |
+| `--lake-state {auto,forcing,glsea,era5-land,stated}` | WRF and met_em inputs: where the lakes start from at a cold start: auto (default) requests the analysis of an automatic source that covers the domain's lakes (the NOAA GLERL Great Lakes analysis), forcing keeps the input files' own lake surface and requests nothing, or a source-table row by id |
+| `--lake-state-path FILE` | WRF and met_em inputs: the acquired CF NetCDF file a --lake-state row reads, for a row with no download address |
 | `--late-after-minutes MIN` | download routes only: how far past its scheduled time a lead may be before the run stops with exit 75; wins over the config's [fetch] late_after_minutes and the source row's budget |
 | `--live-products-width` | _(accepted, but not listed by --help)_ |
 | `--max-lag-hours` | oldest lagged cycle (0 disables lags) |
@@ -770,7 +776,7 @@ Takes no options of its own.
 | `--no-sppt, --sppt` | stochastically perturbed parameterization tendencies in every member (WRF's SPPT; overrides [ensemble.stochastic] sppt; default: the config's) |
 | `--no-supervise` | WRF input directories only: integrate in this process under an existing device reservation |
 | `--no-surface-fill` | disable fill soil/SST perturbations |
-| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged |
+| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged (also GPUWM_VERIFY_VISUALS=0) |
 | `--nudging {off,spectral,grid}` | relax toward prepared source analyses; spectral keeps only the configured large-scale modes |
 | `--outdir DIR` | output root for one timestamped run folder per launch, with forecast files, pictures and diagnostics (default <config-stem>-go beside the config); an existing run-... folder is used directly |
 | `--output-config TOML` | Read [output] formats and icechunk_store from TOML; CLI values override it |
@@ -1000,7 +1006,7 @@ Takes no options of its own.
 | `--from DIR` | stage from a local directory instead of downloading (offline installs); verification is identical |
 | `--ishmael` | stage the three pinned WRF adaptive-habit ice tables |
 | `--ishmael-root DIR` | ISHMAEL staging root, otherwise the selected table cache |
-| `--ocean` | also stage the 12 NOAA WOA18 monthly mixed-layer-depth files (about 85 MB) the default mixed-layer ocean initializes from, SHA-256 verified, into the cache forecasts read (GPUWM_OCEAN_CACHE, else <case data root>/ocean), so no forecast fetches them from NCEI at start |
+| `--ocean` | also stage the 12 NOAA WOA18 monthly mixed-layer-depth files (about 85 MB) the mixed-layer ocean (sf_ocean_physics = 1 or 2) initializes from, SHA-256 verified, into the cache forecasts read (GPUWM_OCEAN_CACHE, else <case data root>/ocean), so no forecast fetches them from NCEI at start |
 | `--ocean-only` | stage only the ocean climatology and leave the coefficient tables alone |
 | `--ocean-root DIR` | stage the ocean climatology into DIR (same meaning as GPUWM_OCEAN_CACHE) |
 | `--replace-damaged` | with --schemes and --from, replace damaged files only after source pin verification |
@@ -1098,6 +1104,9 @@ Takes no options of its own.
 | `--initial-inputs JSON` | a separate packaged analysis for the initial state (gpuwm prep --initial-inputs); the fetched source still supplies every lateral boundary, and the forecast starts at the preparation head while the later boundary times are built |
 | `--keep-checkpoints N` | how many complete checkpoint sets the run keeps in its folder (default 1, enough to resume); 0 keeps every hourly set, which a later branch or downscale from an earlier checkpoint needs |
 | `--keep-member-files` | also retain every member's full history files |
+| `--lake-ice {observed,wps}` | GFS route lake ice: observed (default) freezes lakes the IMS daily analysis sees frozen, fetched only when a domain has lakes; wps keeps the forcing's ice and fetches nothing. Written as [ingest] gfs_lake_ice |
+| `--lake-state {auto,forcing,glsea,era5-land,stated}` | WRF and met_em inputs: where the lakes start from at a cold start: auto (default) requests the analysis of an automatic source that covers the domain's lakes (the NOAA GLERL Great Lakes analysis), forcing keeps the input files' own lake surface and requests nothing, or a source-table row by id |
+| `--lake-state-path FILE` | WRF and met_em inputs: the acquired CF NetCDF file a --lake-state row reads, for a row with no download address |
 | `--late-after-minutes MIN` | download routes only: how far past its scheduled time a lead may be before the run stops with exit 75; wins over the config's [fetch] late_after_minutes and the source row's budget |
 | `--live-products-width` | _(accepted, but not listed by --help)_ |
 | `--max-lag-hours` | oldest lagged cycle (0 disables lags) |
@@ -1113,7 +1122,7 @@ Takes no options of its own.
 | `--no-sppt, --sppt` | stochastically perturbed parameterization tendencies in every member (WRF's SPPT; overrides [ensemble.stochastic] sppt; default: the config's) |
 | `--no-supervise` | WRF input directories only: integrate in this process under an existing device reservation |
 | `--no-surface-fill` | disable fill soil/SST perturbations |
-| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged |
+| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged (also GPUWM_VERIFY_VISUALS=0) |
 | `--nudging {off,spectral,grid}` | relax toward prepared source analyses; spectral keeps only the configured large-scale modes |
 | `--outdir DIR` | output root for one timestamped run folder per launch, with forecast files, pictures and diagnostics (default <config-stem>-go beside the config); an existing run-... folder is used directly |
 | `--output-config TOML` | Read [output] formats and icechunk_store from TOML; CLI values override it |
@@ -2771,10 +2780,13 @@ Takes no options of its own.
 | `--iau-window-seconds S` | with --analysis and IAU: the window, overriding the bundle's iau.window_s |
 | `--icechunk-store URL` | Output store base: local path or s3://bucket/prefix; domain and member paths are appended (default RUN/icechunk) |
 | `--keep-member-files` | also retain every member's full history files |
+| `--lake-state {auto,forcing,glsea,era5-land,stated}` | WRF and met_em inputs: where the lakes start from at a cold start: auto (default) requests the analysis of an automatic source that covers the domain's lakes (the NOAA GLERL Great Lakes analysis), forcing keeps the input files' own lake surface and requests nothing, or a source-table row by id |
+| `--lake-state-path FILE` | WRF and met_em inputs: the acquired CF NetCDF file a --lake-state row reads, for a row with no download address |
 | `--members N` | make an N-member ensemble with aggregate products |
 | `--met-em DIR` | WPS metgrid directory with met_em.d0*.nc and producing namelist.input; native ArWen initialization |
 | `--no-memory-gate` | run a case whose priced peak envelope exceeds this card's free memory anyway, as `gpuwm go --no-memory-gate` does: the envelope is an upper bound and the card's own allocation then decides; a model state too big to build at all is still refused |
 | `--no-supervise` | run the experiment in this process (escape hatch; disables fresh-process recovery and exclusive-GPU supervision) |
+| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged (also GPUWM_VERIFY_VISUALS=0) |
 | `--outdir OUT` | wrfout output directory |
 | `--output-config TOML` | Read [output] formats and icechunk_store from TOML; CLI values override it |
 | `--output-format FORMATS` | Output-format table rows, comma separated (default netcdf); netcdf,icechunk adds atomic native Zarr v3 history |
@@ -2853,6 +2865,7 @@ Takes no options of its own.
 | `--icechunk-store URL` | Output store base: local path or s3://bucket/prefix; domain and member paths are appended (default RUN/icechunk) |
 | `--io-mode {history}` | history output (the only mode this seam offers; `--io-mode none` is a runner-level diagnostic, reachable through --print-command) |
 | `--no-memory-gate` | restore a forecast whose priced peak envelope exceeds this card's free memory anyway, as `gpuwm go --no-memory-gate` does: the envelope is an upper bound and the card's own allocation then decides; a model state too big to build at all is still refused |
+| `--no-verify-visuals` | skip postforecast observation verification; the physical run is unchanged (also GPUWM_VERIFY_VISUALS=0) |
 | `--outdir DIR` | where this forecast's output goes. By default it is the parent of one timestamped run folder per forecast, so running the same prepared tree twice never merges two runs' wrfout frames and report.json. Point it at an existing run-... folder and that folder is used as given -- and refused if a forecast is already in it |
 | `--output-config TOML` | Read [output] formats and icechunk_store from TOML; CLI values override it |
 | `--output-format FORMATS` | Output-format table rows, comma separated (default netcdf); netcdf,icechunk adds atomic native Zarr v3 history |

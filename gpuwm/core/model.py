@@ -732,6 +732,10 @@ def restart_identity_payload(exp) -> dict:
             run.pop("relax_timescale_s", None)
         if not run.get("relax_w"):
             run.pop("relax_w", None)
+        # The boundary hydrometeor envelope: 25 km is the constant every
+        # earlier fingerprint served with; another value is another run.
+        if run.get("lbc_hydrometeor_envelope_km", 25.0) == 25.0:
+            run.pop("lbc_hydrometeor_envelope_km", None)
         # New canopy controls bind selected nondefault physics while their
         # defaults preserve the older numerical-generation fingerprint.
         if run.get("urban_ucm_generation", "wrf_471") == "wrf_471":

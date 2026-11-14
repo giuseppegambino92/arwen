@@ -192,6 +192,36 @@ _SHARED_CODES = frozenset({
     # on the 2.9.0 round-2 tree offered lightning_option 1, 2 or 11 with no
     # reflectivity or cumulus cloud top as launchable.
     "lightning-dependency",
+    # The shallow-cumulus pairings, shared by the same construction: plan
+    # review calls gpuwm.config's validate_shallow_cumulus_config, the
+    # function validate_run_config calls.  Before it did, 3,936 of 84,932
+    # reachable plans offered a shcu_physics the run refuses (UW without an
+    # ice carrier, Deng without MYJ or MYNN, any shallow scheme under MYNN
+    # EDMF, NSCV beside NSAS) as launchable.  This walk had been ending in
+    # an AttributeError (spp_conv=1 with Grell-Freitas) before it reported
+    # them.
+    "shallow-cumulus-pairing",
+    # The rest of the run door's per-domain laws on settings the
+    # prepared-tree route offers freely, shared by the same construction
+    # (gpuwm.physics_registry._run_door_laws: each is the function
+    # validate_run_config calls).  Before they were, 728 of 84,932
+    # reachable plans (1,456 domains) were offered as launchable and
+    # refused at run start: bmj_rad_feedback without BMJ (158),
+    # obs_nudge_opt=1 with max_obs=0 (158), shalconv=0 outside SAS (158),
+    # icloud_bl=0 (130, of which the 128 without MYNN met a refusal that
+    # named no breakage and is gone) and tke_budget=1 outside km_opt=2 or
+    # MYNN (124).
+    "bmj-feedback-dependency",
+    "observation-nudging-settings",
+    "shalconv-consumer",
+    "mynn-option-identity",
+    "tke-budget-closure",
+    # The native fog-settling and KF-trigger laws.  Shared since they were
+    # written: plan review calls gpuwm.config's validate_fog_kfeta_config,
+    # the function validate_run_config calls.  Left unclassified, every
+    # grav_settling plan on an mp_physics=28 template ended in an
+    # "unclassified error code" report instead of being compared.
+    "fog-kfeta-pairing",
     "madwrf-dependency",
     "unimplemented-selector",
     "unknown-selector-combination",

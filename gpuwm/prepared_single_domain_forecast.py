@@ -784,6 +784,17 @@ _LBC_DYNAMICS_FIELDS = ("mu", "phi", "theta", "u", "v")
 _LBC_FIELDS = tuple(sorted((*_LBC_DYNAMICS_FIELDS, "qv")))
 
 
+def _ring_hydrometeor_record(state, cfg):
+    """:func:`gpuwm.ingest.lateral_bc.hydrometeor_ring_receipt` for the
+    root's own boundary inventory, as the run record carries it."""
+    from gpuwm.ingest.lateral_bc import hydrometeor_ring_receipt
+
+    if not getattr(cfg, "specified", False) or getattr(cfg, "nested", False):
+        return None
+    fields = getattr(state, "_external_scalar_boundary_fields", None) or ()
+    return _strict_json(hydrometeor_ring_receipt(cfg, fields))
+
+
 def _lbc_field_inventories(cfg) -> tuple[list[str], ...]:
     """The LBC field lists a prepared cache may legitimately carry for ``cfg``.
 
@@ -9613,9 +9624,11 @@ def _restore_single_checkpoint(model, restart):
 
 
 from gpuwm.hydro.runtime import forecast_scope as _hydro_forecast_scope
+from gpuwm.ingest.lake_state import skips_analysis_on_resume as _skips_lake_analysis_on_resume
 
 
 @_hydro_forecast_scope
+@_skips_lake_analysis_on_resume
 def run_prepared_forecast(
         inputs: PreparedForecastInputs, *, output_directory: Path,
         observer=None, first_products=None, stream_init: str = "auto",
@@ -10568,6 +10581,11 @@ def run_prepared_forecast(
         allocate_held_tendencies(node.state, cfg, selected(exp))
     with _checkpoint_restore_resources(writers, step_log):
         restart_info = _restore_single_checkpoint(model, restart)
+        if restart_info is not None:
+            # The lakes now hold the checkpoint's fields, not the analysis
+            # bound when the driver was built (item 5 review).
+            from gpuwm.ingest.lake_state import mark_restored
+            mark_restored([driver], checkpoint=restart)
         from gpuwm.runtime import _restart_is_complete
         already_complete = _restart_is_complete(restart_info)
         restored_seconds = (None if restart_info is None else
@@ -10687,6 +10705,10 @@ def run_prepared_forecast(
             node, steppers[int(node.cfg.grid_id)], exp.devices,
             devices_history, devices_peaks, committed_step_observer)
     history_frames: list = []
+    # What the ring serves is recorded interval by interval as it is held
+    # (lateral_bc._held_host_sides); this run's record starts empty.
+    from gpuwm.ingest.lateral_bc import reset_hydrometeor_ring_ledger
+    reset_hydrometeor_ring_ledger()
     try:
         memory_watch.start()
         stall_watch.arm()
@@ -11096,6 +11118,11 @@ def run_prepared_forecast(
             "forces": int(execution.forces),
             "feedback_calls": int(execution.feedback_calls),
         },
+        # The lateral-boundary hydrometeors the ring was fed: the envelope
+        # key and value, the rule, and the fraction of the source's
+        # condensate on the outermost row it served (None when the boundary
+        # carries water vapour only).
+        "lateral_boundary_hydrometeors": _ring_hydrometeor_record(node.state, cfg),
         "health": {
             "initial": initial_health,
             "final": final_health,
@@ -11357,6 +11384,14 @@ def run_prepared_forecast(
             **prestaged_boundaries.receipt,
             "boundary_read_seconds": dict(boundary_source.intervals.read_seconds),
         }
+    # WHAT THE LAKES STARTED FROM, and why (defect 5 of the 2026-11-12
+    # runner list: an auto lake request that failed was one stderr line
+    # and a receipt under ~/.gpuwm, never in the run's own record).
+    if getattr(driver, "lake_initialization_receipt", None) is not None:
+        report["lake_initialization"] = dict(
+            driver.lake_initialization_receipt,
+            scope=("the store road's slab-height template, not the whole "
+                   "domain" if init_road == "store" else "the whole domain"))
     if getattr(driver, "wind_farm_detection", None) is not None:
         report["wind_farm_detection"] = driver.wind_farm_detection
     if getattr(driver, "wind_farm", None) is not None:
@@ -11379,6 +11414,9 @@ def run_prepared_forecast(
         atmosphere_steps=int(execution.steps))
     from gpuwm.ocean.products import publish as _wave_products
     report["wave_products"] = _wave_products(driver,outdir=outdir)
+    # The ocean this run ran, in words, every run (door item 6).
+    from gpuwm.surface_ocean import domains_ocean_receipt
+    report["ocean"] = domains_ocean_receipt([cfg])
     report["hydro_products"] = _hydro_products(
         driver, _hydro_settings(), outdir=outdir, dx_m=float(cfg.dx))
     _atomic_json(outdir / "report.json", report)

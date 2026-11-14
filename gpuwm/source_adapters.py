@@ -666,13 +666,26 @@ _ERA5_ARCHIVE = ArchiveWindow(
      "https://confluence.ecmwf.int/spaces/CKB/pages/76414402/ERA5+data+documentation"),
     user_note="Recent dates are preliminary ERA5T; their publication time can vary.",
 )
-_GLOBAL_PGRB2_ARCHIVE = ArchiveWindow(
-    "s3", "2021-03-22T12",
-    "The current /atmos/ object layout starts at the 2021-03-22 12Z "
-    "implementation. Older archive objects use different paths; this is "
-    "a transport-layout boundary, not the start of the scientific record.",
-    ("https://www.emc.ncep.noaa.gov/emc/pages/numerical_forecast_systems/gfs/implementations.php",),
-)
+def _layout_windows(source: str) -> tuple[ArchiveWindow, ...]:
+    """One date-guidance window per host, from the dated layout table.
+
+    The oldest declared layout of each host is its first day, so the
+    calendar and the fetch read the same rows
+    (``rw-wps-archive-layouts.v1.json``).
+    """
+
+    rows = fetch_endpoints.archive_rows(source)
+    oldest = {}
+    for row in rows:
+        held = oldest.get(row["transport"])
+        if held is None or row["record_start"] < held["record_start"]:
+            oldest[row["transport"]] = row
+    return tuple(ArchiveWindow(
+        row["transport"], row["record_start"], row["why"],
+        tuple(row["documentation"]), user_note=row["license"])
+        for row in oldest.values())
+
+
 _HRRR_NATIVE_ARCHIVE = ArchiveWindow(
     "s3", "2014-07-30T18",
     "The archive's first day has the native and pressure companion f00 "
@@ -1249,12 +1262,7 @@ _ADAPTERS = (
         forecast_time_owner="gfs_forecast_hours",
         seed_fields=('air_pressure', 'air_temperature', 'eastward_wind',
                      'northward_wind', 'mean_sea_level_pressure'),
-        archives=tuple(ArchiveWindow(
-            row["transport"], row["record_start"], row["why"],
-            tuple(row["documentation"]), user_note=row["license"])
-            for row in fetch_endpoints.archive_rows("gfs")
-            if row is next(r for r in fetch_endpoints.archive_rows("gfs")
-                           if r["transport"] == row["transport"])),
+        archives=_layout_windows("gfs"),
         name="GFS (global, 0.25 degree)", aliases=("gfs-0p25", "gfs-0.25"),
         default_product="pgrb2.0p25", max_hour=384,
         upstream_ingest="full",
@@ -1348,7 +1356,7 @@ _ADAPTERS = (
         "gdas",
         record="analysis",
         forecast_time_owner="gdas_forecast_hours",
-        archives=(_GLOBAL_PGRB2_ARCHIVE,),
+        archives=_layout_windows("gdas"),
         name="GDAS analysis (0.25 degree)", aliases=("gdas-0p25", "gdas-0.25"),
         file_family="GRIB2",
         decoder=(

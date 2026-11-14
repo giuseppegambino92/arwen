@@ -9858,6 +9858,14 @@ def initialize_physics(
                              inputs=lightning_inputs)
     from gpuwm.ocean.seaice import initialize as initialize_seaice
     initialize_seaice(driver.fields, cfg)
+    # The run log states the ocean every run, chosen or not (door item 6:
+    # the omitted selection used to become PWP at 48 h, unannounced).  On
+    # stderr, beside the lake-state line: a tool that builds drivers and
+    # prints JSON on stdout (tools/health_field_census.py --json) got the
+    # note inside its document.
+    from gpuwm.surface_ocean import ocean_lines
+    for _ocean_line in ocean_lines(cfg, prefix="note: ocean: "):
+        print(_ocean_line, file=sys.stderr, flush=True)
     if cfg.sf_ocean_physics or cfg.ocean_analysis:
         from gpuwm.core.surface_ocean import initialize_ocean
         ocean_fields = dict(driver.fields)

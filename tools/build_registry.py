@@ -6419,6 +6419,7 @@ def _madwrf_metadata(registry: dict) -> None:
     from gpuwm.wrf_physics_inventory import _INVENTORIES
     from gpuwm.core.refl import SCHEME_ABSENT_REFL_10CM
     from gpuwm.checkpoint_identity import MICROPHYSICS_ALGORITHM_IDENTITIES
+    from gpuwm.core import rrtmgp as _rrtmgp
     inv = _INVENTORIES[96]
     rows = {
         "restart_algorithm_identity": MICROPHYSICS_ALGORITHM_IDENTITIES[96],
@@ -6440,8 +6441,14 @@ def _madwrf_metadata(registry: dict) -> None:
         "nest_transition": {"mixed_edge_ported":False,"mass_fields":["qv","qc","qi","qs"],
                             "moment_fields":[],"refusal":"No qualified MAD-WRF mixed-scheme nest edge"},
         "offline_child": {"same_scheme":False,"refusal":"No qualified MAD-WRF offline-child route"},
+        # The adapter's own reason and remedy, as _consumer_rows writes them
+        # for every other scheme, so the run door (validate_run_config reads
+        # this row) and plan review (the refused_when rule derived from the
+        # same reason) refuse MAD-WRF on RTE+RRTMGP in the same words.
         "cloud_optics": {"legacy_declares_radii":False,"rte_rrtmgp_coupling":None,
-                         "rte_rrtmgp_refusal":"MAD-WRF cloud optics are qualified with legacy RRTMG"},
+                         "rte_rrtmgp_refusal":(
+                             _rrtmgp._NO_CLOUD_OPTICS_COUPLING[96] + ". "
+                             + _rrtmgp._CLOUD_OPTICS_REMEDY)},
         "lateral_forcing_dataset":None,
         "stock_wrf_export": {"inventoried":True,"reason":None,"scheme":inv.scheme,
             "registry_package":inv.registry_package,
@@ -6657,6 +6664,12 @@ _ASSET_RESOLUTION_LADDERS = {
             (*physics_compat.USER_THOMPSON_TABLE_ROOT_PARTS[:-1], "thompson-wrf461-hail")),
     },
     "wrf-cam3-tables-v1": {"data_relative":"cam3", "root_environment_override":"GPUWM_CAM_TABLE_ROOT", "staged_root":"~/.gpuwm/tables/cam3"},
+    # RCON's initialized table stream: the two rungs gpuwm.core.rcon
+    # table_root() walks.  Not packaged and not built by any shipped tool.
+    "wrf471-rcon-initialized-tables-v1": {
+        "root_environment_override": "GPUWM_RCON_TABLE_ROOT",
+        "staged_root": "~/.gpuwm/tables/rcon",
+    },
     "wrf461-gsfc-shortwave-coefficients": {"data_relative":"wrf_radiation/gsfcsw"},
     # mp=8's classic set: two of its four assets are excluded from the
     # companion wheel by size (gpuwm-data/pyproject.toml) and arrive
@@ -8269,8 +8282,9 @@ def build(registry: dict) -> dict:
         "warnings"] = list(MORRISON_WARNINGS)
     _fast_sbm_admission(registry)
     _p3_nc_mp51(registry)
-    # After every microphysics option is registered, because it walks them.
-    _rte_rrtmgp_cloud_optics_constraints(registry)
+    # The RTE+RRTMGP cloud-optics refusals are written near the end of this
+    # function, after the last pass that (re)registers a microphysics
+    # option: see the call beside _misc_qualified_components.
     _tke_nest_child(registry)
     registry["authority"][
         "wrf_v461_compatibility_matrix"
@@ -10200,6 +10214,21 @@ def build(registry: dict) -> dict:
                 "sf_sfclay_physics=0 with an active LSM"),
         }
 
+    # Pleim-Xiu land (sf_surface_physics=7) reads the same exchange seam and
+    # validate_run_config refuses it with sf_sfclay_physics=0 in the same
+    # words as the three above, but its option is written whole by the PX
+    # pass with empty constraints, so plan review called PX land with the
+    # surface layer off LAUNCHABLE and the run refused it
+    # (tests/test_physics_combination_matrix.py, 3.0.1).  Only the admission
+    # constraint is added: requires_components is not part of the physics
+    # identity, so PX receipts and checkpoints are unchanged.
+    px_land = land_options["pleim-xiu"]
+    px_land.setdefault("constraints", {}).setdefault(
+        "requires_components", {})["surface_layer"] = list(accepted)
+    px_land["constraints"].setdefault("requires_components_reasons", {})[
+        "surface_layer"] = land_options["noah"]["constraints"][
+            "requires_components_reasons"]["surface_layer"]
+
     # The experiment-per-domain front door now exposes harmless WRF-legal
     # PBL-off and radiation-off choices, plus every WRF-legal implemented
     # surface-layer pairing.  This is option-scoped so ArWen's analytic
@@ -11133,6 +11162,13 @@ def build(registry: dict) -> dict:
     # every maturity renamed, so the consumer rows see the final
     # option set.
     _cam5_components(registry)
+    # After every microphysics option is registered, because it walks them.
+    # It used to run some 2,800 lines earlier, and _madwrf_metadata (mp=96)
+    # and _misc_udm_component (mp=27) rewrite their options whole after
+    # that point, so both shipped with no refused_when rule: plan review
+    # called MAD-WRF and UDM on RTE+RRTMGP launchable and validate_run_config
+    # refused them (tests/test_physics_combination_matrix.py, 3.0.1).
+    _rte_rrtmgp_cloud_optics_constraints(registry)
     _consumer_rows(registry)
     # After the consumer rows exist, because it reads one of them, and
     # BEFORE the reachability pass below, which prices a way out through
@@ -13266,15 +13302,33 @@ def _multiscale_parameters(registry):
 
 
 def _misc_rcon_component(registry):
+    from gpuwm.core.rcon import TABLE_BYTES, TABLE_FILENAME, TABLE_SHA256
     options = registry["components"]["microphysics"]["options"]
     options["rcon-mp29"] = {
         "label": "RCON / MP29", "selectors": {"mp_physics": 29},
         "implemented": True, "maturity": "implemented-unverified", "scientific_evidence": "none",
-        "parameters": {"moist": True, "moist_cq": True}, "asset_requirements": [],
+        "parameters": {"moist": True, "moist_cq": True},
+        # The run refuses RCON by name when this stream is absent
+        # (gpuwm.tables, MissingTableAssets).  The option declared no asset
+        # row while RCON-SPEED-01 refused it first, so once that guard left,
+        # plan review said nothing about a file the run cannot start
+        # without.  The row is the one plan review resolves into
+        # install_state, naming the file and the roots it searched.
+        "asset_requirements": [{
+            "id": "wrf471-rcon-initialized-tables-v1",
+            "kind": "operator-supplied-table-set",
+            "assets": [{"filename": TABLE_FILENAME, "bytes": TABLE_BYTES, "sha256": TABLE_SHA256}],
+            "root_environment_override": "GPUWM_RCON_TABLE_ROOT",
+            "redistributed_by_gpuwm": False,
+            "regenerable": False,
+            "resolution": dict(_ASSET_RESOLUTION_LADDERS["wrf471-rcon-initialized-tables-v1"]),
+            "source": "WRF v4.7.1 RCON initialization: the scheme's lookup tables as the native build holds them after its init, written as one stream",
+            "note": "Not distributed with gpuwm, and no shipped tool builds it: it is written from a native WRF 4.7.1 build. `gpuwm fetch-tables --schemes rcon --from DIR` verifies a copy by size and SHA-256 and installs it.",
+        }],
         "constraints": {"required_settings": {"moist": True},
                         "required_settings_reasons": {"moist": "RCON advances vapor, five condensate classes and number moments."}},
-        "extensions": {"preset_scope_reason": "Strict replay and a three-hour forecast pass. The measured 1.885431x MP28 GPU stage cost exceeds the speed gate; RCON-SPEED-01 refuses forecast admission until a qualified handoff."},
-        "warnings": ["Requires the native initialized RCON table stream, validated by size and SHA-256. Set GPUWM_RCON_TABLE_ROOT to its directory. Strict real-input replay: 0/25246820 words, no exclusions. A three-hour forecast passes, but measured stage cost is 1.885431x MP28; the native 1.053748x profile does not justify the GPU excess. Forecast admission is refused by RCON-SPEED-01 until speed qualification."]}
+        "extensions": {"preset_scope_reason": "Strict replay and a three-hour forecast pass. The measured microphysics stage costs 1.885431x MP28 on the GPU, outside the 1.2x speed bar, so it is an explicit component override and never a default."},
+        "warnings": ["Requires the native initialized RCON table stream, validated by size and SHA-256. Set GPUWM_RCON_TABLE_ROOT to its directory. Strict real-input replay: 0/25246820 words, no exclusions. A three-hour forecast passes. Measured microphysics stage cost is 1.885431x MP28; the native 1.053748x profile does not explain the GPU excess, which is an open speed defect."]}
 
 
 def _misc_udm_component(registry):

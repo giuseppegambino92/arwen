@@ -95,7 +95,7 @@ from collections.abc import Iterable, Mapping
 import json
 import math
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -10217,6 +10217,15 @@ class ExperimentMemoryEstimate:
     # Table-selected hydro is priced outside the static RunConfig physics
     # roster. Missing owner hooks are explicit gaps in this same envelope.
     hydro_memory: dict | None = None
+    # The legacy RRTMG engine width priced for each domain when it is wider
+    # than one wave (estimate_experiment's card_free_bytes); () = one wave.
+    legacy_radiation_widths: tuple = ()
+    # Set only where the call can take a wider width on this card than the
+    # one priced above: that width for each domain, and the envelope at it.
+    # The price is what the forecast needs; this is what the process can
+    # come to hold, because the call widens into the room that is free.
+    legacy_radiation_take_widths: tuple = ()
+    legacy_radiation_take_envelope_bytes: int = 0
 
     @property
     def fixed_envelope_bytes(self) -> int:
@@ -11657,6 +11666,7 @@ def estimate_phases(exp: ExperimentConfig, *, source: str,
                     preparation_route: str | None = None,
                     urban_columns=None,
                     resident_forcing_intervals: int | None = None,
+                    alloc_budget_bytes: int | None = None,
                     ) -> PhaseMemoryEstimate:
     """Price every phase of ``exp`` and say which one binds the card.
 
@@ -11718,6 +11728,12 @@ def estimate_phases(exp: ExperimentConfig, *, source: str,
         vram_gib=vram_gib, profile=profile,
         boundary_species=source_boundary_species(boundary_source),
         urban_columns=urban_columns,
+        # The card the planner machine names prices the legacy RRTMG width
+        # the run takes there.
+        card_free_bytes=_machine_vram_bytes(machine),
+        # ...and a door with an allocation leg hands its budget over, so
+        # the width priced never fails a leg that one wave passes.
+        alloc_budget_bytes=alloc_budget_bytes,
         # The one-card residue bound, as the admission prices it.
         **single_card_residue_terms(exp))
     key = None if source is None else str(source).strip().lower()
@@ -11794,6 +11810,51 @@ def estimate_phases(exp: ExperimentConfig, *, source: str,
         host_ram_bytes=_machine_host_bytes(machine),
         boundary_source=boundary_source,
     )
+
+
+def _machine_vram_bytes(machine) -> int | None:
+    """A planner machine's free VRAM as a positive int, or ``None``."""
+    vram = getattr(machine, "vram_bytes", None)
+    if isinstance(vram, bool) or not isinstance(vram, int) or vram <= 0:
+        return None
+    return vram
+
+
+def legacy_take_note(estimate, free_bytes: int | None = None) -> str | None:
+    """One sentence where a legacy RRTMG call can take a wider engine width
+    on the card than the one priced, else ``None``.
+
+    Breakage it prevents: a reader packs a second job into the room the
+    price leaves, the first call widens into that room and the pool keeps
+    it (OKC on 11.40 GiB free: priced 7.59 GiB, held 10.40).
+
+    ``free_bytes`` is the card's free memory as the door read it.  Where
+    the envelope at the wider width is over it, the sentence names the
+    free memory and not the envelope: a process cannot hold more than the
+    card has, and the full HRRR recipe on a 96 GB card read "can come to
+    hold 95.67 GiB" beside "94.42 GiB free"."""
+    take = getattr(estimate, "legacy_radiation_take_widths", ()) or ()
+    if not any(take):
+        return None
+    priced = (getattr(estimate, "legacy_radiation_widths", ()) or ()) or (None,) * len(take)
+    rows = ", ".join(
+        f"d{d.grid_id:02d} {wide} columns per engine chunk where "
+        f"{f'{narrow} are' if narrow else 'one wave is'} priced"
+        for d, wide, narrow in zip(estimate.domains, take, priced)
+        if wide and wide != narrow)
+    take = estimate.legacy_radiation_take_envelope_bytes
+    if free_bytes is not None and take >= int(free_bytes):
+        return (f"legacy RRTMG widens into free memory: the price above is "
+                f"what the forecast needs, and on this card the call can take "
+                f"{rows}, so the process can come to fill the "
+                f"{int(free_bytes) / GIB:.2f} GiB this card has free and keeps "
+                f"it to the end of the run; place no other job beside it")
+    return (f"legacy RRTMG widens into free memory: the price above is what "
+            f"the forecast needs, and on this card the call can take {rows}, "
+            f"so the process can come to hold "
+            f"{estimate.legacy_radiation_take_envelope_bytes / GIB:.2f} GiB and "
+            f"keeps it to the end of the run; count the larger figure before "
+            f"placing another job beside it")
 
 
 def _machine_host_bytes(machine) -> int | None:
@@ -11909,6 +11970,8 @@ def estimate_experiment(
         tile_buffer: bool = False,
         lake_columns=None,
         pool_residue_cap_bytes: int | None = None,
+        card_free_bytes: int | None = None,
+        alloc_budget_bytes: int | None = None,
 ) -> ExperimentMemoryEstimate:
     """Sum the per-domain itemizations; count the lru_cache-shared
     k-distribution tables ONCE (rrtmgp.py:324/:436 -- baseline behavior,
@@ -11938,7 +12001,18 @@ def estimate_experiment(
 
     ``pool_residue_cap_bytes`` bounds the pool margin in bytes
     (:func:`forecast_pool_estimate_bytes`); the ranked road passes
-    :data:`RANK_POOL_RESIDUE_BOUND_BYTES` for its device ranks (A13)."""
+    :data:`RANK_POOL_RESIDUE_BOUND_BYTES` for its device ranks (A13).
+
+    ``card_free_bytes`` is the free VRAM of the card the forecast will run
+    on (a planner machine's ``vram_bytes``).  Given, a legacy RRTMG call is
+    priced at the engine width it takes there
+    (:func:`gpuwm.core.rrtmg_legacy.legacy_wide_chunk_width`, asked with
+    those bytes less the non-pool and resident terms the forecast holds
+    beside the call); ``None`` prices the one-wave width, as before.
+
+    ``alloc_budget_bytes`` is the budget of a door's allocation leg (``gpuwm
+    check``: the free bytes less its reserve).  Given, the legacy width is
+    also stepped down while the allocation estimate is over it."""
     column_chunk = (exp.column_chunk if column_chunk is None
                     else column_chunk)
     if (isinstance(column_chunk, bool)
@@ -12049,18 +12123,23 @@ def estimate_experiment(
         # card_local_memory_profile and this line did not.  A declared card
         # is not a measured one, and the conservative reference intercept
         # is what every other term in this function already gives it.
-        legacy_calls = tuple(
-            legacy_radiation_vram_bytes(
+        def legacy_terms(dc):
+            return dict(
                 ncol=dc.run.ny * dc.run.nx, nz=dc.run.nz,
-                p_top=exp.vertical.p_top, column_chunk=None,
+                p_top=exp.vertical.p_top,
                 longwave=radiation_scheme_ids(dc.run)[0] == 4,
                 shortwave=radiation_scheme_ids(dc.run)[1] == 4,
                 resident_threads=device_profile.resident_thread_capacity,
                 aer_opt=int(getattr(dc.run, "aer_opt", 0)),
                 chem_optics_rows=feedback_row_count(dc.run))
-            if (4 in radiation_scheme_ids(dc.run)
-                and rrtmg_variant(dc.run) == RRTMG_VARIANT_LEGACY) else 0
-            for dc in exp.domains)
+
+        def is_legacy(dc):
+            return (4 in radiation_scheme_ids(dc.run)
+                    and rrtmg_variant(dc.run) == RRTMG_VARIANT_LEGACY)
+
+        legacy_calls = tuple(
+            legacy_radiation_vram_bytes(column_chunk=None, **legacy_terms(dc))
+            if is_legacy(dc) else 0 for dc in exp.domains)
         legacy_envelope = max(legacy_calls, default=0)
     from gpuwm.core.flg_radiation import flg_radiation_vram_bytes
     flg_storage = sum(flg_radiation_vram_bytes(dc.run.nx*dc.run.ny, dc.run.nz)
@@ -12071,7 +12150,7 @@ def estimate_experiment(
     nz = exp.domains[0].run.nz
     from gpuwm.hydro.memory import forecast_plan
     hydro_plan = forecast_plan(exp)
-    return ExperimentMemoryEstimate(
+    estimate = ExperimentMemoryEstimate(
         hydro_memory=None if hydro_plan is None else hydro_plan.inventory(),
         domains=domains,
         k_tables_bytes=k_distribution_bytes() if uses_rrtmgp else 0,
@@ -12112,6 +12191,96 @@ def estimate_experiment(
                           if profile is None else profile)),
         physics_tables_bytes=experiment_thompson_coefficient_bytes(exp) + (sum(((n * 4 + 511) // 512) * 512 for n in (10789, 7501, 7501, 43, 17, 1)) if any(int(dc.run.mp_physics) == 95 for dc in exp.domains) else 0),
     )
+    if not uses_legacy or card_free_bytes is None:
+        return estimate
+    # THE WIDTH THE CALL TAKES ON THIS CARD.  A legacy call takes two or
+    # four waves when the card has room (rrtmg_legacy._wide_chunk), and the
+    # one-wave price above left that out: 2.00 GiB priced, 6.0 GiB live on
+    # the OKC met_em case on a 5090.  The call sees the card's free bytes
+    # less what the forecast already holds: the non-pool residency and the
+    # resident pool.
+    #
+    # A DOOR READS THE CARD THROUGH A CONTEXT OF ITS OWN.  The free figure a
+    # door measures is short by its own CUDA context, which the forecast
+    # finds free again; the rule is asked with that much added back.
+    # Measured on a 5090 (2026-11-12, a ballast leaving 10.60 GiB
+    # free): `gpuwm check` read 10.11 GiB and the rule, asked with 10.11,
+    # answered two waves, while the forecast started with 10.60 and took
+    # four.
+    #
+    # THE PRICE IS THE NEED; THE TAKE IS RECORDED BESIDE IT.  Where the
+    # envelope at the width the call takes is over the card's whole-process
+    # budget, the price steps down to the widest width whose envelope fits,
+    # and to one wave when none does: that is what the forecast needs, and
+    # it fits.  Without this step a 12 GiB card the wizard had sized at
+    # 10.21 GiB was priced 11.51 GiB by the check of the same file.
+    #
+    # The call does NOT step down there.  Its rule (the priced transient
+    # plus 1 GiB inside the bytes free at the call) knows nothing of the
+    # envelope's margins, so it widens all the same and the pool keeps the
+    # blocks to the end of the run.  Measured, same card and case: with
+    # 11.40 GiB free the call took four waves and the process reached
+    # 10.40 GiB, where the stepped-down price is 7.59; with 10.60 GiB free
+    # it reached the same 10.40 and left 0.20 GiB.  So the estimate carries
+    # the width the call can take and the envelope at it
+    # (legacy_radiation_take_*), and the check prints both figures.
+    #
+    # NO LEG FAILS AT A WIDTH THE RUN ONLY TAKES FROM FREE MEMORY.  `gpuwm
+    # check` has a second budget, its allocation leg's (the free bytes less
+    # the reserve), and on a large run that one is the tighter: retention
+    # is 3 % of the estimate.  Stepped down on the envelope alone, the full
+    # CONUS HRRR recipe on a 96 GB card (94.42 GiB free) was priced at two
+    # waves, 89.76 GiB against that leg's 88.97, and the check refused a
+    # forecast `gpuwm go` admits and one wave fits
+    # (test_check_chained_forcing_slots).  A door that has such a leg hands
+    # its budget in, and the width steps down for either.
+    from gpuwm.core.rrtmg_legacy import (
+        legacy_saturation_chunk, legacy_wide_chunk_width)
+    base = legacy_saturation_chunk(device_profile.resident_thread_capacity)
+    beside = estimate.envelope_intercept_bytes + estimate.resident_bytes
+    take_widths = tuple(
+        legacy_wide_chunk_width(
+            base=base, ncol_day=None,
+            free_bytes=max(0, int(card_free_bytes)
+                           + device_profile.cuda_context_bytes - beside),
+            **legacy_terms(dc)) if is_legacy(dc) else None
+        for dc in exp.domains)
+    budget = int(card_free_bytes) - EXTERNAL_MARGIN_BYTES
+
+    def at(widths):
+        calls = tuple(
+            legacy_radiation_vram_bytes(column_chunk=width, **legacy_terms(dc))
+            if width else call
+            for dc, width, call in zip(exp.domains, widths, legacy_calls))
+        return replace(
+            estimate,
+            workspace_bytes=(estimate.workspace_bytes if uses_rrtmgp
+                             else max(calls) + flg_storage),
+            legacy_call_peak_by_domain=calls if uses_rrtmgp else (),
+            legacy_radiation_widths=widths if any(widths) else ())
+
+    if not any(take_widths):
+        return estimate
+
+    def over(priced):
+        return (priced.peak_envelope_bytes > budget
+                or (alloc_budget_bytes is not None
+                    and priced.alloc_estimate_bytes > int(alloc_budget_bytes)))
+
+    take = at(take_widths)
+    widths, priced = take_widths, take
+    while any(widths) and over(priced):
+        # One factor narrower on every widened domain: 4 -> 2 -> one wave.
+        widths = tuple(
+            None if not width or width // 2 <= base else width // 2
+            for width in widths)
+        priced = at(widths)
+    if widths == take_widths or over(priced):
+        # The take is the price, or one wave does not fit either and the
+        # door refuses the one-wave price, as before.
+        return priced
+    return replace(priced, legacy_radiation_take_widths=take_widths,
+                   legacy_radiation_take_envelope_bytes=take.peak_envelope_bytes)
 
 
 def admission_estimate(exp: ExperimentConfig, *, machine=None, source=None,
@@ -12195,7 +12364,9 @@ def admission_estimate(exp: ExperimentConfig, *, machine=None, source=None,
             exp, column_chunk=exp.column_chunk,
             profile=getattr(machine, "device_profile", None),
             boundary_species=source_boundary_species(source),
-            urban_columns=urban_columns, **single_card_residue_terms(exp))
+            urban_columns=urban_columns,
+            card_free_bytes=_machine_vram_bytes(machine),
+            **single_card_residue_terms(exp))
 
 
 # ---------------------------------------------------------------------------
@@ -13956,7 +14127,122 @@ def target_capacity_source(sampled, target_hardware) -> str:
     return "measured on the selected GPU" if target_hardware else "measured"
 
 
+#: What a check priced at the narrowest MYNN width says; ``gpuwm go``'s gate
+#: (:mod:`gpuwm.go_cli`) says the same sentence, so the two read alike.
+MYNN_NARROWED_NOTE = (
+    "priced at the narrowest MYNN column width: the width the run would "
+    "pick does not fit, so the forecast walks the widest width that does "
+    "(speed, never bytes)")
+
+
+def declared_mynn_target(args) -> tuple[int, int] | None:
+    """``(total, free)`` bytes of the DECLARED card the MYNN width is priced
+    for, or ``None`` when no card is declared (or ``--alloc`` measures this
+    one).
+
+    Breakage (door item 3, 2026-11-12): a declared-budget check priced
+    MYNN's column workspace at the width THIS process would walk on the
+    card under the desk, or at the 98,304-column cap when it read none
+    (:func:`gpuwm.core.mynn_pbl_scratch.choose_mynn_column_chunk`).  An
+    outside runner's ``gpuwm check from_namelist.toml --free-gib 15.25
+    --vram-gib 15.92`` for a 470 x 370 x 49 MYNN forecast read no card,
+    priced 4.79 GiB of MYNN workspace where the 16 GB card walks 0.80, and
+    reported 17.86 GiB "EXCEEDS" for a run that then ran on that card.
+    The declared card is the one the report is about, as ``gpuwm domain``
+    already prices it (:func:`gpuwm.domain_wizard._sizing_phases`).
+    """
+    from gpuwm.core.mynn_pbl_scratch import (
+        mynn_pricing_total_bytes, mynn_target_fit_active)
+
+    vram_gib = getattr(args, "vram_gib", None)
+    if (vram_gib is None or getattr(args, "alloc", False)
+            or mynn_target_fit_active()):
+        # ``gpuwm domain``'s inline check already prices its own target.
+        return None
+    free_gib = getattr(args, "free_gib", None)
+    if free_gib is None:
+        free_gib = getattr(args, "budget_gib", None)
+    if free_gib is None:
+        return None
+    if not all(math.isfinite(float(v)) and float(v) > 0
+               for v in (vram_gib, free_gib)):
+        # Not a card: the check's own front door refuses the flag by name.
+        return None
+    measured = (getattr(args, "_shared_sizing_budget", None) is not None
+                or bool(getattr(args, "_target_hardware_supplied", False)))
+    total = mynn_pricing_total_bytes(float(vram_gib), measured=measured)
+    return total, int(min(float(free_gib), float(vram_gib)) * GIB)
+
+
+def narrow_mynn_fits(exp, phase_terms, envelope_budget) -> bool:
+    """Would this one-card resident forecast fit at the narrowest MYNN
+    width, where the width it would walk does not?  The test ``gpuwm go``'s
+    gate and :func:`gpuwm.core.streaming.admit_resident_road` apply."""
+    if (envelope_budget is None or len(getattr(exp, "domains", ()) or ()) != 1
+            or getattr(getattr(exp, "devices", None), "enabled", False)
+            or not mynn_width_adjustable(exp)):
+        return False
+    with required_mynn_pricing(exp):
+        narrow = estimate_phases(exp, **phase_terms)
+    return (not narrow.streamed_forecast
+            and narrow.peak_envelope_bytes <= int(envelope_budget))
+
+
+def _check_main_at_narrow_mynn(args, exp) -> int:
+    """Re-price the whole report at the narrowest MYNN width, and say so."""
+    from gpuwm.core.mynn_pbl_scratch import (
+        MYNN_PBL_COLUMN_CHUNK_MINIMUM, resolve_mynn_column_chunk)
+
+    nz = next(int(dc.run.nz) for dc in exp.domains
+              if int(getattr(dc.run, "bl_pbl_physics", 0) or 0) == 5)
+    args._mynn_narrowed = {
+        "walked_width_columns": int(resolve_mynn_column_chunk(nz)),
+        "priced_width_columns": int(MYNN_PBL_COLUMN_CHUNK_MINIMUM),
+        "basis": MYNN_NARROWED_NOTE}
+    try:
+        with required_mynn_pricing(exp):
+            return _check_main(args)
+    finally:
+        args._mynn_narrowed = None
+
+
+def check_subject_tokens(args) -> list[str]:
+    """What the user checked, as command tokens: CONFIG, or ``--met-em DIR``.
+
+    The met_em door prices a TOML it resolves into a scratch directory; a
+    printed command or report naming that file names one that is gone.
+    """
+    met_em = getattr(args, "met_em", None)
+    return ["--met-em", str(met_em)] if met_em is not None else [str(args.config)]
+
+
+def check_subject(args) -> str:
+    """The checked input's path for the report: CONFIG or the met_em DIR."""
+    return check_subject_tokens(args)[-1]
+
+
+def check_subject_command(args) -> str:
+    return " ".join(check_subject_tokens(args))
+
+
 def check_main(args) -> int:
+    """``gpuwm check CONFIG [--alloc]``: memory section of the preflight.
+
+    A declared card (``--vram-gib`` with ``--free-gib`` or ``--budget-gib``)
+    prices the MYNN column width that card walks, not the one this machine
+    would (:func:`declared_mynn_target`).
+    """
+    target = declared_mynn_target(args)
+    if target is None:
+        return _check_main(args)
+    from gpuwm.core.mynn_pbl_scratch import mynn_pricing_memory
+
+    total, free = target
+    with mynn_pricing_memory(total_bytes=total, free_bytes=free):
+        return _check_main(args)
+
+
+def _check_main(args) -> int:
     """``gpuwm check CONFIG [--alloc]``: memory section of the preflight.
 
     Exit codes: 0 = every requested leg measured and PASSED; 1 = a leg
@@ -14062,9 +14348,11 @@ def check_main(args) -> int:
     from gpuwm.data_assets import companion_root
 
     companion_root()
-    _warn_unstaged_physics_tables(exp)
-    if prepared is None:
-        _warn_unmet_run_preparation(exp)
+    if getattr(args, "_mynn_narrowed", None) is None:
+        # Said once: a narrowed re-price (below) walks this far again.
+        _warn_unstaged_physics_tables(exp)
+        if prepared is None:
+            _warn_unmet_run_preparation(exp)
     # Declared-budget sizing is deliberately portable and needs no GPU.
     # A check of this machine must prove kernels can run before allocating
     # a forecast or claiming its measured memory budget is usable.
@@ -14078,7 +14366,7 @@ def check_main(args) -> int:
         readiness = {"status": checked.status, "detail": checked.detail,
                      "action": checked.action}
         if checked.status != "verified":
-            command = ["gpuwm", "check", str(args.config), "--free-gib", "FREE_GIB",
+            command = ["gpuwm", "check", *check_subject_tokens(args), "--free-gib", "FREE_GIB",
                        "--vram-gib", "CAPACITY_GIB"]
             if prepared is not None:
                 command += ["--prepared-root", str(prepared.prepared_root)]
@@ -14100,7 +14388,7 @@ def check_main(args) -> int:
                 required = {"status": "unavailable", "reason": str(error),
                             "budget_bytes": None, "memory_verdict": "unavailable"}
             if args.json:
-                print(json.dumps({"config": str(args.config),
+                print(json.dumps({"config": check_subject(args),
                                   "gpu_readiness": readiness,
                                   "required_memory": required,
                                   "cpu_planning": planning,
@@ -14512,8 +14800,8 @@ def check_main(args) -> int:
     host_geometry = None if prepared is not None else ingest_host_geometry(args)
     from gpuwm.core.streaming import planner_machine
 
-    phases = estimate_phases(
-        exp, source=None if prepared is not None else ingest_source,
+    phase_terms = dict(
+        source=None if prepared is not None else ingest_source,
         column_chunk=chunk, boundary_source=priced_boundary_source,
         urban_columns=urban_columns,
         preparation_route=config_preparation_route(args.config),
@@ -14549,6 +14837,32 @@ def check_main(args) -> int:
         machine=(target_machine if target_hardware else
                  planner_machine(vram_bytes=free, name="gpuwm check budget",
                                  device_profile=profile)))
+    if report is None and free is not None:
+        # THE ALLOCATION LEG'S BUDGET GOES IN TOO: the legacy RRTMG width
+        # priced below never fails that leg where one wave passes it (see
+        # estimate_experiment).
+        phase_terms["alloc_budget_bytes"] = reserve.budget_bytes(free)
+    phases = estimate_phases(exp, **phase_terms)
+    widths = getattr(phases.forecast, "legacy_radiation_widths", ()) or ()
+    take_widths = getattr(phases.forecast, "legacy_radiation_take_widths", ()) or ()
+    if report is None and (any(widths) or any(take_widths)):
+        # ONE LEGACY WIDTH ON THE PAGE.  The estimate above was priced
+        # before this card's free bytes were read, at the one-wave legacy
+        # RRTMG width; the envelope was priced at the width the call takes
+        # on this card.  The breakdown, the JSON and the allocation gate
+        # read the same width as the envelope, or the page shows 2.00 GiB
+        # of workspace under an envelope that holds 6.22.
+        estimate = replace(
+            estimate, workspace_bytes=phases.forecast.workspace_bytes,
+            legacy_call_peak_by_domain=phases.forecast.legacy_call_peak_by_domain,
+            legacy_radiation_widths=widths,
+            legacy_radiation_take_widths=take_widths,
+            legacy_radiation_take_envelope_bytes=(
+                phases.forecast.legacy_radiation_take_envelope_bytes))
+        gates = evaluate_alloc_gates(
+            measured_used_bytes=measured_used,
+            estimate_bytes=estimate.alloc_estimate_bytes,
+            measured_free_bytes=free, reserve=reserve)
     #: AN UNPRICED INGEST LANE COSTS THE INGEST SECTION, NOT THE PHASE
     #: ESTIMATE.  This used to be ``phases = None``, which threw away the
     #: streamed forecast term along with the ingest one -- and the streamed
@@ -14599,6 +14913,21 @@ def check_main(args) -> int:
     #: carry it whether or not anybody reads the text.
     envelope_over_budget = (envelope_budget is not None
                             and envelope > envelope_budget)
+    if (getattr(args, "_mynn_narrowed", None) is None and not args.alloc
+            and envelope_over_budget
+            and narrow_mynn_fits(exp, phase_terms, envelope_budget)):
+        # THE MYNN WIDTH IS A SPEED CHOICE (A3c), priced as the run's own
+        # resident door and ``gpuwm go``'s gate price it: the width the run
+        # would walk does not fit, the narrowest does, and the run pins the
+        # widest that fits before it allocates.  Priced at the walked width
+        # here, a forecast the door admits was refused by its own check
+        # (door item 3, 2026-11-12).  The trigger is the ENVELOPE alone,
+        # as in ``admit_resident_road``: the run narrows on nothing else, so
+        # a check that also narrowed on the allocation-estimate leg priced a
+        # width the run would not walk and passed it (item 3 review).
+        return _check_main_at_narrow_mynn(args, exp)
+    if getattr(args, "_mynn_narrowed", None) is not None:
+        phase_verdict += "; " + MYNN_NARROWED_NOTE
     #: THE OTHER MEMORY.  Every figure above this line is device memory;
     #: the ingest phase also decodes the forcing into HOST RAM, holds two
     #: copies of it at once while the root case is prepared, and no door
@@ -14719,7 +15048,9 @@ def check_main(args) -> int:
             int(phases.streamed.peak_vram_bytes) <= envelope_budget)
     if args.json:
         payload = {
-            "config": str(args.config), "experiment": exp.name,
+            "config": check_subject(args), "experiment": exp.name,
+            **({} if getattr(args, "met_em", None) is None
+               else {"met_em": str(args.met_em)}),
             "output_disk": output_disk,
             "preprocess_backend": phases.preprocess_backend,
             "gpu_readiness": readiness,
@@ -14736,6 +15067,17 @@ def check_main(args) -> int:
             "k_tables_bytes": estimate.k_tables_bytes,
             "physics_tables_bytes": estimate.physics_tables_bytes,
             "workspace_bytes": estimate.workspace_bytes,
+            "legacy_radiation_widths": list(
+                getattr(estimate, "legacy_radiation_widths", ()) or ()),
+            # Present only where the call can take a wider width on this
+            # card than the one priced: the forecast needs the envelope,
+            # and the process can come to hold this much.
+            **({"legacy_radiation_take_widths":
+                    list(estimate.legacy_radiation_take_widths),
+                "legacy_radiation_take_envelope_bytes":
+                    estimate.legacy_radiation_take_envelope_bytes}
+               if any(getattr(estimate, "legacy_radiation_take_widths", ()) or ())
+               else {}),
             "scratch_arena_bytes": estimate.scratch_arena_bytes,
             "scratch_arena_request_bytes":
                 estimate.scratch_arena_request_bytes,
@@ -14836,6 +15178,11 @@ def check_main(args) -> int:
             # exit code.  "incomplete" is the state the reduction used to
             # have no name for.
             "memory_verdict": memory_gate_verdict(gates),
+            # The geography leg's refusal (exit 6), apart from the memory
+            # verdict: a wrapper that read every non-zero exit as "does
+            # not fit" reported a forecast that fits as one that does not
+            # (door item 3).  None when the leg passed or was not asked.
+            "geography_blocker": getattr(args, "_geography_blocker", None),
             "gates_evaluated": sum(
                 1 for metric in N0_GATE_METRICS if gates[metric] is not None),
             "gates_total": len(N0_GATE_METRICS),
@@ -14916,6 +15263,8 @@ def check_main(args) -> int:
         # otherwise while the printed line beside it said this, which is
         # one report giving two answers about one card (task 206).
         payload["phase_verdict"] = phase_verdict
+        if getattr(args, "_mynn_narrowed", None) is not None:
+            payload["mynn_column_width"] = dict(args._mynn_narrowed)
         if not ingest_priced:
             payload["ingest"] = None
             payload["ingest_not_priced_reason"] = ingest_note
@@ -15074,6 +15423,17 @@ def check_main(args) -> int:
               f"(saves {estimate.scratch_arena_saved_bytes / GIB:.2f} GiB); "
               f"dycore state {estimate.dycore_state_workspace_bytes / GIB:.2f} "
               f"GiB (saves {estimate.dycore_state_saved_bytes / GIB:.2f} GiB)")
+        steps_down = any(getattr(estimate, "legacy_radiation_take_widths", ()) or ())
+        for d, width in zip(estimate.domains,
+                            getattr(estimate, "legacy_radiation_widths", ()) or ()):
+            if width:
+                print(f"  d{d.grid_id:02d}: legacy RRTMG priced at {width} columns "
+                      f"per engine chunk, "
+                      + ("the widest width whose price fits this card's budget "
+                         "(the NOTE under BINDING PHASE names the width the "
+                         "call can take)" if steps_down else
+                         "the wide width the call takes when this card has "
+                         "the room"))
         print(f"  TIER 1  resident: {_format_bytes(estimate.resident_bytes)}"
               f"   subtotal (+workspace+transient peak): "
               f"{_format_bytes(estimate.subtotal_bytes)}")
@@ -15283,6 +15643,8 @@ def check_main(args) -> int:
         # produced it -- was withheld from exactly the configs whose
         # envelope the streaming replaced.
         print(f"  BINDING PHASE: {phase_verdict}.")
+        if legacy_take_note(estimate, free):
+            print(f"  NOTE: {legacy_take_note(estimate, free)}.")
         if streamed_alloc_gate:
             # The gate leg below prices this run as it will actually be
             # allocated, and it compares a different budget from the one
@@ -15420,7 +15782,7 @@ def check_main(args) -> int:
                   f"passing, and a verdict over the rest is not the verdict "
                   f"these three describe.{declared}")
             if not args.alloc:
-                print(f"  to measure them: gpuwm check {args.config} --alloc "
+                print(f"  to measure them: gpuwm check {check_subject_command(args)} --alloc "
                       f"(constructs every persistent allocation on the real "
                       f"card, runs zero steps, reports measured vs estimate)")
         if envelope_over_budget:
@@ -15600,6 +15962,10 @@ def check_main(args) -> int:
                   f"budget {_format_bytes(getattr(phases.streamed, 'host_budget_bytes', None)).strip()}")
         print(f"BINDING PHASE: {binding_phase} needs {envelope / GIB:.2f} GiB; "
               f"whole-process budget {_format_bytes(envelope_budget).strip()}")
+        if legacy_take_note(estimate, free):
+            print(f"NOTE: {legacy_take_note(estimate, free)}.")
+        if getattr(args, "_mynn_narrowed", None) is not None:
+            print(f"MYNN column width: {MYNN_NARROWED_NOTE}")
         if envelope_over_budget:
             print(f"WARNING: observed peak envelope {envelope / GIB:.2f} GiB exceeds the "
                   f"{envelope_budget / GIB:.2f} GiB budget.")
@@ -15743,7 +16109,7 @@ def check_main(args) -> int:
               "verified against.", file=sys.stderr)
         print(f"  remedy: declare the card this config is sized for and "
               f"re-run:\n"
-              f"    gpuwm check {args.config} --budget-gib <N> "
+              f"    gpuwm check {check_subject_command(args)} --budget-gib <N> "
               f"--vram-gib <card GiB>\n"
               f"  # this configuration's peak envelope is "
               f"{envelope / GIB:.2f} GiB; a budget at or above it "
@@ -15784,8 +16150,15 @@ def register_cli(subparsers) -> None:
              "budget; --alloc performs the enforced N0 allocation run")
     p.add_argument("config", type=Path, metavar="CONFIG", nargs="?",
                    help="experiment TOML (or legacy RunConfig TOML, "
-                        "wrapped as a one-domain experiment); omit only for "
-                        "gpuwm check --json context-free box inventory")
+                        "wrapped as a one-domain experiment); omit only with "
+                        "--met-em DIR, or for gpuwm check --json context-free "
+                        "box inventory")
+    p.add_argument("--met-em", type=Path, default=None, metavar="DIR",
+                   dest="met_em",
+                   help="price a WPS metgrid directory (met_em.d0*.nc and "
+                        "the producing namelist.input), the input of `gpuwm "
+                        "run --met-em`, in place of CONFIG.  Reads no "
+                        "WPS_GEOG: the met_em files carry the static fields")
     p.add_argument("--prepared-root", type=Path, default=None, metavar="DIR",
                    help="verify prepared forecast inputs and price their "
                         "land cover and retained boundary tables; "

@@ -6245,10 +6245,11 @@ def _arbitrary_input_check() -> Check:
 
 
 def _ocean_climatology_check() -> Check:
-    """Is the default mixed-layer ocean's WOA18 MLD climatology staged here?
+    """Is the mixed-layer ocean's WOA18 MLD climatology staged here?
 
-    The ocean is on by default for forecasts of 48 h and more and starts
-    from one month of this climatology.  Unstaged, a forecast fetches its
+    A forecast that sets sf_ocean_physics = 1 or 2 starts its ocean from
+    one month of this climatology (through 3.0.1 option 2 was also the
+    default at 48 h and more; since 3.0.2 an omitted key is 0).  Unstaged, a forecast fetches its
     month from NCEI at its first step, so an NCEI outage stops it there
     (2026-10-22: THREDDS 503 for an hour, a run died after 60 min of
     preparation).  Degraded, not blocking: the default still works while
@@ -6280,9 +6281,9 @@ def _ocean_climatology_check() -> Check:
                      "on use)")
     return Check(
         "ocean climatology", "missing",
-        f"{'; '.join(parts)} at {root}; the default mixed-layer ocean "
-        "(48 h and longer) then fetches its month from NCEI at the "
-        "forecast's first step, and fails there while NCEI is down",
+        f"{'; '.join(parts)} at {root}; a forecast that sets "
+        "sf_ocean_physics = 1 or 2 then fetches its month from NCEI at its "
+        "first step, and fails there while NCEI is down",
         "gpuwm fetch-tables --ocean\n"
         "  # 12 files, about 85 MB, SHA-256 verified before install;\n"
         "  # --from DIR stages them from a local copy, offline",

@@ -549,6 +549,31 @@ def _extended_grid(grid, halo: int):
     )
 
 
+def _wrap_lon(lon: float) -> float:
+    """``lon`` in [-180, 180)."""
+    return (float(lon) + 180.0) % 360.0 - 180.0
+
+
+def lon_rotated_grid(grid, degrees: float):
+    """``grid`` turned east by ``degrees`` about the pole: the same cells
+    in the same order, every longitude of the definition moved together.
+
+    Lambert, Mercator and polar stereographic depend on longitude only
+    through ``lon - lon_0``, so the turned grid samples a source turned by
+    the same angle exactly where the grid samples the source itself.  A
+    footprint continued past 180 degrees is built this way
+    (:func:`gpuwm.static.highres_fetch.dateline_rotation_deg`)."""
+    if not degrees:
+        return grid
+    return type(grid)(
+        grid.ref_lat, _wrap_lon(grid.ref_lon + degrees), grid.truelat1,
+        grid.truelat2, _wrap_lon(grid.stand_lon + degrees), grid.dx, grid.dy,
+        grid.e_we, grid.e_sn, known_x=grid.known_x, known_y=grid.known_y,
+        moad_cen_lat=grid.moad_cen_lat,
+        moad_cen_lon=_wrap_lon(grid.moad_cen_lon + degrees),
+    )
+
+
 def _source_crs(dataset, source: BoundRaster):
     try:
         from pyproj import CRS
@@ -1568,8 +1593,14 @@ def build_terrain_override(grid: ProjectedGrid, *,
                            halo: int = HALO,
                            terrain_smoothing=WPS_DEFAULT,
                            baseline: Mapping[str, np.ndarray] | None = None,
+                           lon_rotation_deg: float = 0.0,
                            ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Build ONLY the terrain field for one domain, from one bound raster.
+
+    ``lon_rotation_deg``: the turn ``terrain`` was built in (a footprint
+    continued past 180 degrees, :func:`lon_rotated_grid`); the warp reads
+    it with the grid turned by the same angle, and everything else (the
+    coverage record's longitudes included) is the grid's own.
 
     This is the same terrain science :func:`build_highres_overrides` runs --
     area-average onto the halo-extended WPS grid, one WPS smooth-desmooth
@@ -1586,7 +1617,7 @@ def build_terrain_override(grid: ProjectedGrid, *,
     the source publishes no tile over the footprint).
     """
     latlon = _mass_latlon(grid)
-    extended = _extended_grid(grid, halo)
+    extended = _extended_grid(lon_rotated_grid(grid, lon_rotation_deg), halo)
     terrain_extended = (
         None if terrain is None
         else resample_continuous(terrain, extended, method="average"))

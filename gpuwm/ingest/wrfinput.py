@@ -2162,7 +2162,12 @@ def initialize_wrfinput_physics(state, restored, cfg, *, radiation=None,
             np.asarray(raw["TSK"])[water], tslb[:, water].shape)
     raw = {**raw, "TSLB": tslb}  # alias loop below re-reads raw (immutable)
     from gpuwm.ingest.wrfinput_sfire import fire_static_fields
-    driver = initialize_physics(
+    # The file's own LAKEMASK is restored over the driver's by the alias
+    # pass below; the lake bind runs inside this build, before it, and is
+    # told how many lake cells the file holds so its line can say why it
+    # binds none of them when the land use names none.
+    from gpuwm.ingest.lake_state import knowing_input_lake_cells
+    driver = knowing_input_lake_cells(raw.get("LAKEMASK"), initialize_physics)(
         state, cfg, landmask=raw["LANDMASK"], tsk=raw["TSK"],
         irrigation=raw.get("IRRIGATION"), irr_ph_field=raw.get("IRR_PH_FIELD"),
         seaice_inputs={name.lower(): raw[name] for name in ("ALBSI", "ICEDEPTH", "SNOWSI") if name in raw},

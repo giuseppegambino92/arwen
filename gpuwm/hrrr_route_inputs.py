@@ -1564,6 +1564,11 @@ ROUTE_FORECAST_TOML_FIELDS: Mapping[str, str] = MappingProxyType({
     "cellcount_method": "gpuwm/core/lightning.py, the lightning driver",
     "cldtop_adjustment": "gpuwm/core/lightning.py, the lightning driver",
     "do_radar_ref": "gpuwm/core/refl.py, the reflectivity diagnostic",
+    # The boundary hydrometeor envelope (ARWEN item 10): read when the
+    # forecast serves the root's ring, from the bound TOML; WRF has no key
+    # for it, so the pair cannot spell it.
+    "lbc_hydrometeor_envelope_km": (
+        "gpuwm/ingest/lateral_bc.py ring_cell_radius, the ring hold"),
     # The wind-farm turbine table and its resolution limit: loaded with the
     # forecast's wind-farm scheme from the bound TOML; the pair spells no
     # turbine table.

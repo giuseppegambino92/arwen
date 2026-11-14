@@ -1152,6 +1152,121 @@ pub fn fit_isobaric_temperature_scale(
     DiscreteColorScale { levels: new_levels, colors, ..scale }
 }
 
+/// The fitted-scale table (data/fitted-scales.json): which fixed ladders are
+/// fitted to the field they colour, and how.
+const FITTED_SCALES_JSON: &str = include_str!("../data/fitted-scales.json");
+
+/// One row of the fitted-scale table: a filled field, and the fewest of its
+/// ladder's bands the field must span before the ladder is fitted to it
+/// (`min_bands` 0: fitted only when the field lies outside the ladder).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FittedScaleRow {
+    pub field: String,
+    pub vertical: String,
+    #[serde(default)]
+    pub height_m: Option<u16>,
+    #[serde(default)]
+    pub min_bands: f64,
+    #[serde(default)]
+    pub min_step: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct FittedScaleTable {
+    rows: Vec<FittedScaleRow>,
+}
+
+impl FittedScaleRow {
+    /// Whether this row names the filled field `selector`.
+    pub fn names(&self, selector: FieldSelector) -> bool {
+        let field = match self.field.as_str() {
+            "temperature" => CanonicalField::Temperature,
+            _ => return false,
+        };
+        if selector.field != field {
+            return false;
+        }
+        match (self.vertical.as_str(), selector.vertical) {
+            ("isobaric", VerticalSelector::IsobaricHpa(_)) => true,
+            ("height_agl", VerticalSelector::HeightAboveGroundMeters(height)) => self.height_m == Some(height),
+            _ => false,
+        }
+    }
+}
+
+/// Every row of the fitted-scale table, parsed once.
+pub fn fitted_scale_rows() -> &'static [FittedScaleRow] {
+    static ROWS: std::sync::OnceLock<Vec<FittedScaleRow>> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| {
+        serde_json::from_str::<FittedScaleTable>(FITTED_SCALES_JSON)
+            .expect("data/fitted-scales.json is compiled in and parsed by a unit test")
+            .rows
+    })
+}
+
+/// The fitted-scale row for a filled field, if the table has one.
+pub fn fitted_scale_row(selector: FieldSelector) -> Option<&'static FittedScaleRow> {
+    fitted_scale_rows().iter().find(|row| row.names(selector))
+}
+
+/// A fixed ladder fitted to the field it colours, by its table row: a row
+/// with `min_bands` 0 is the isobaric rule (fit_isobaric_temperature_scale,
+/// unchanged); otherwise a field inside the ladder that spans fewer than
+/// `min_bands` bands is drawn on a finer ladder cut for it.
+pub fn fit_scale_to_field(scale: DiscreteColorScale, values: &[f32], row: &FittedScaleRow) -> DiscreteColorScale {
+    if !(row.min_bands > 0.0) {
+        return fit_isobaric_temperature_scale(scale, values);
+    }
+    let levels = &scale.levels;
+    if levels.len() < 3 {
+        return scale;
+    }
+    let mut finite: Vec<f32> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    if finite.len() < 16 {
+        return scale;
+    }
+    let mut quantile = |q: f64| {
+        let index = ((finite.len() - 1) as f64 * q).round() as usize;
+        let (_, value, _) = finite.select_nth_unstable_by(index, |a, b| a.total_cmp(b));
+        f64::from(*value)
+    };
+    let (low, high) = (quantile(0.02), quantile(0.98));
+    let step = levels[1] - levels[0];
+    if !(step > 0.0) || high - low >= row.min_bands * step {
+        // Wide enough for the fixed ladder: the isobaric rule (unchanged
+        // inside the ladder, moved onto a field outside it).
+        return fit_isobaric_temperature_scale(scale, values);
+    }
+    let min_step = row.min_step.filter(|s| *s > 0.0).unwrap_or(step);
+    let fine = nice_step_at_most((high - low) / row.min_bands).max(min_step).min(step);
+    let fitted = ((high - low) * 1.6).max(row.min_bands * 1.6 * fine);
+    let middle = (low + high) * 0.5;
+    let start = ((middle - fitted * 0.5) / fine).floor();
+    let stop = ((middle + fitted * 0.5) / fine).ceil();
+    let count = (stop - start).max(1.0) as usize;
+    let decimals = (-fine.log10()).ceil().max(0.0) as i32;
+    let unit = 10f64.powi(decimals);
+    let new_levels: Vec<f64> = (0..=count)
+        .map(|i| ((start + i as f64) * fine * unit).round() / unit)
+        .collect();
+    let count = (new_levels.len() + scale.colors.len()).saturating_sub(levels.len());
+    let colors = resampled_palette(&scale.colors, count);
+    DiscreteColorScale { levels: new_levels, colors, ..scale }
+}
+
+/// The largest 1, 2 or 5 times a power of ten that is no more than `x`.
+fn nice_step_at_most(x: f64) -> f64 {
+    if !(x > 0.0) || !x.is_finite() {
+        return 0.0;
+    }
+    let base = 10f64.powf(x.log10().floor());
+    [5.0, 2.0, 1.0]
+        .into_iter()
+        .map(|m| m * base)
+        .find(|v| *v <= x * (1.0 + 1e-9))
+        .unwrap_or(base)
+}
+
 /// Keep strong surface winds visible instead of saturating the 60 kt bar.
 /// Inputs are already in the recipe's display units (knots). Ordinary-wind
 /// charts retain their exact scale; stronger fields extend to a 20 kt boundary.
@@ -1334,6 +1449,100 @@ mod isobaric_temperature_fit_tests {
         assert_eq!(fitted.levels[1] - fitted.levels[0], fixed.levels[1] - fixed.levels[0]);
         assert_eq!(fitted.colors.first(), fixed.colors.first());
         assert_eq!(fitted.colors.last(), fixed.colors.last());
+    }
+}
+
+#[cfg(test)]
+mod fitted_scale_table_tests {
+    use super::*;
+
+    fn ladder_2m() -> DiscreteColorScale {
+        let recipe = rustwx_models::plot_recipe("2m_temperature").unwrap();
+        let selector = FieldSelector::height_agl(CanonicalField::Temperature, 2);
+        match operational_fill_scale_for_recipe(recipe, selector) {
+            ColorScale::Discrete(scale) => scale,
+            _ => panic!("discrete"),
+        }
+    }
+
+    fn row_2m() -> &'static FittedScaleRow {
+        fitted_scale_row(FieldSelector::height_agl(CanonicalField::Temperature, 2)).expect("a 2 m row")
+    }
+
+    #[test]
+    fn every_row_parses_and_names_a_filled_field() {
+        assert!(!fitted_scale_rows().is_empty());
+        assert!(fitted_scale_row(FieldSelector::isobaric(CanonicalField::Temperature, 300)).is_some());
+        assert!(fitted_scale_row(FieldSelector::height_agl(CanonicalField::Temperature, 2)).is_some());
+        assert!(fitted_scale_row(FieldSelector::height_agl(CanonicalField::Temperature, 10)).is_none());
+        assert!(fitted_scale_row(FieldSelector::isobaric(CanonicalField::GeopotentialHeight, 500)).is_none());
+    }
+
+    #[test]
+    fn an_isobaric_row_is_the_isobaric_rule() {
+        let recipe = rustwx_models::plot_recipe("300mb_temperature_height_winds").unwrap();
+        let selector = FieldSelector::isobaric(CanonicalField::Temperature, 300);
+        let fixed = match operational_fill_scale_for_recipe(recipe, selector) {
+            ColorScale::Discrete(scale) => scale,
+            _ => panic!("discrete"),
+        };
+        let row = fitted_scale_row(selector).unwrap();
+        for values in [
+            (0..1000).map(|i| -60.0 + 25.0 * i as f32 / 999.0).collect::<Vec<f32>>(),
+            (0..1000).map(|i| -33.0 + 9.0 * i as f32 / 999.0).collect(),
+            (0..1000).map(|i| -45.0 + 0.5 * i as f32 / 999.0).collect(),
+        ] {
+            let by_row = fit_scale_to_field(fixed.clone(), &values, row);
+            let by_rule = fit_isobaric_temperature_scale(fixed.clone(), &values);
+            assert_eq!(by_row.levels, by_rule.levels);
+            assert_eq!(by_row.colors, by_rule.colors);
+        }
+    }
+
+    #[test]
+    fn a_wide_2m_field_keeps_the_fixed_ladder_byte_for_byte() {
+        let fixed = ladder_2m();
+        let values: Vec<f32> = (0..1000).map(|i| 40.0 + 30.0 * i as f32 / 999.0).collect();
+        let fitted = fit_scale_to_field(fixed.clone(), &values, row_2m());
+        assert_eq!(fitted.levels, fixed.levels);
+        assert_eq!(fitted.colors, fixed.colors);
+    }
+
+    #[test]
+    fn a_fine_grids_2m_field_spans_many_bands_not_one_colour() {
+        // A 15 km box at 111 m: 61.2..62.6 F, under two bands of the fixed 1 F ladder.
+        let fixed = ladder_2m();
+        let values: Vec<f32> = (0..18225).map(|i| 61.2 + 1.4 * (i % 135) as f32 / 134.0).collect();
+        let fitted = fit_scale_to_field(fixed.clone(), &values, row_2m());
+        let (lo, hi) = (fitted.levels[0], *fitted.levels.last().unwrap());
+        assert!(lo <= 61.2 && hi >= 62.6, "ladder {lo}..{hi} misses the field");
+        let step = fitted.levels[1] - fitted.levels[0];
+        assert!(step < 1.0 && step >= 0.1 - 1e-9, "step {step}");
+        assert!(1.4 / step >= 6.0, "the field spans {} bands", 1.4 / step);
+        assert_eq!(fitted.levels.len() - fitted.colors.len(), fixed.levels.len() - fixed.colors.len());
+        assert_eq!(fitted.colors.first(), fixed.colors.first());
+        assert_eq!(fitted.colors.last(), fixed.colors.last());
+        // Levels are whole multiples of the step, written without float dust.
+        assert!(fitted.levels.iter().all(|v| ((v / step).round() * step - v).abs() < 1e-9));
+    }
+
+    #[test]
+    fn a_uniform_2m_field_gets_the_finest_ladder_and_no_division_by_zero() {
+        let fixed = ladder_2m();
+        let values = vec![55.0f32; 400];
+        let fitted = fit_scale_to_field(fixed.clone(), &values, row_2m());
+        let step = fitted.levels[1] - fitted.levels[0];
+        assert!((step - 0.1).abs() < 1e-9, "step {step}");
+        assert!(fitted.levels[0] <= 55.0 && *fitted.levels.last().unwrap() >= 55.0);
+        assert!(fitted.levels.len() >= 7);
+    }
+
+    #[test]
+    fn nice_steps_are_one_two_five() {
+        assert_eq!(nice_step_at_most(0.25), 0.2);
+        assert_eq!(nice_step_at_most(0.83), 0.5);
+        assert_eq!(nice_step_at_most(1.0), 1.0);
+        assert_eq!(nice_step_at_most(0.0), 0.0);
     }
 }
 

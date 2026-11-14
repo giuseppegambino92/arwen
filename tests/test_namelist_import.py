@@ -453,7 +453,7 @@ def test_importer_does_not_coerce_noninteger_hierarchy_tokens(
 @pytest.mark.parametrize(
     "key, values",
     [
-        ("parent_id", (0, 1)),
+        ("parent_id", (2, 1)),
         ("parent_grid_ratio", (9, 3)),
         ("i_parent_start", (2, 40)),
         ("j_parent_start", (2, 30)),
@@ -463,8 +463,34 @@ def test_importer_binds_wps_root_topology(tmp_path, key, values):
     wps, inp = _generic_hierarchy_pair(tmp_path, 2)
     wps.write_text(_replace_namelist_column(
         wps.read_text(encoding="utf-8"), key, values), encoding="utf-8")
-    with pytest.raises(ValueError, match="WPS d01 root topology"):
+    match = ("WPS d01 parent_id must be 1" if key == "parent_id"
+             else "WPS d01 root topology")
+    with pytest.raises(ValueError, match=match):
         import_namelists(wps, inp, name="reject-wps-root")
+
+
+@pytest.mark.parametrize("max_dom", [1, 2])
+def test_importer_takes_wrf_root_spelling_in_namelist_wps(tmp_path, max_dom):
+    """Item 2 of the 2026-11-12 runner defects: generators write
+    ``&geogrid parent_id = 0`` for d01 and import-namelist refused it
+    ("WPS d01 root topology must use parent_id=1"), so an outside runner
+    handed it a rewritten copy.  The head grid's 0 is now taken and booked
+    as normalized; the nest's parent is still compared."""
+    wps, inp = _generic_hierarchy_pair(tmp_path, max_dom)
+    wps_text = wps.read_text(encoding="utf-8")
+    wps.write_text(_replace_namelist_column(
+        wps_text, "parent_id", (0,) + (1,) * (max_dom - 1)),
+        encoding="utf-8")
+    toml_text, report = import_namelists(wps, inp, name="wps-root-zero")
+    booked = [entry for entry in report.dropped
+              if entry.section == "geogrid" and entry.key == "parent_id (root)"]
+    assert [entry.values for entry in booked] == [(0,)]
+    assert "normalized" in booked[0].reason
+    resolved = tmp_path / "wps-root-zero.toml"
+    resolved.write_text(toml_text, encoding="utf-8")
+    exp = load_experiment(resolved)
+    assert [(d.grid_id, d.parent_id) for d in exp.domains] == [
+        (1, 0), (2, 1)][:max_dom]
 
 
 def test_nonintegral_root_spacing_uses_one_exact_ratio_chain(tmp_path):

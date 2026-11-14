@@ -250,8 +250,8 @@ def _hold_domain_carrier(dst: np.ndarray, src, name: str, index: int) -> None:
     passed whole to every tile, e.g. the 3D PWP ocean status word
     ``fields/_pwp_status``, shape (1,)) has no rows to scatter.  Scattering
     it raised "IndexError: tuple index out of range" at the start of every
-    store-direct forecast with sf_ocean_physics = 2, which 48 h runs select
-    by default (full CONUS HRRR, --devices 2, 2026-10-21).  Slab 0's
+    store-direct forecast with sf_ocean_physics = 2, which 48 h runs then
+    selected by default (full CONUS HRRR, --devices 2, 2026-10-21).  Slab 0's
     words are kept; a later slab that built different words is refused,
     because the domain would otherwise start from one slab's arbitrary view.
     """

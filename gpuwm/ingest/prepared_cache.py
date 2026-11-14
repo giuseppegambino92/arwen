@@ -1013,6 +1013,10 @@ SFIRE_PREPARATION_INERT_RUN_FIELDS = frozenset({
 RETIRED_INACTIVE_IDENTITY_FIELDS = {"run.fire_moisture_namelist": ""}
 
 PREPARATION_INERT_RUN_FIELDS = SFIRE_PREPARATION_INERT_RUN_FIELDS | frozenset({
+    # The boundary hydrometeor envelope (fix/door-10) is read when the
+    # forecast SERVES the ring (lateral_bc._held_resident_interval), never
+    # while the tables are prepared: one prepared boundary serves any value.
+    "run.lbc_hydrometeor_envelope_km",
     # The slab snow switch is read by forecast physics only; preparation
     # writes the same initial snow fields under either value. It remains
     # part of the slab checkpoint identity.

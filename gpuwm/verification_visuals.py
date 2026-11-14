@@ -113,11 +113,17 @@ def _run_lock(root: Path, *, name=".verification.lock"):
 
 
 @contextmanager
-def verification_scope(enabled: bool = True):
-    """Carry a run option to in-process and subprocess finish hooks."""
+def verification_scope(enabled: bool | None = True):
+    """Carry a run option to in-process and subprocess finish hooks.
+
+    ``None`` sets nothing and only gives the variable back on exit, so a
+    door that sets it from its flag (``gpuwm run --no-verify-visuals``)
+    bounds that to its own call when the CLI is driven in-process.
+    """
     key = "GPUWM_VERIFY_VISUALS"
     previous = os.environ.get(key)
-    os.environ[key] = "1" if enabled else "0"
+    if enabled is not None:
+        os.environ[key] = "1" if enabled else "0"
     try:
         yield
     finally:
@@ -125,6 +131,28 @@ def verification_scope(enabled: bool = True):
             os.environ.pop(key, None)
         else:
             os.environ[key] = previous
+
+
+def add_argument(parser) -> None:
+    """``--no-verify-visuals``, one spelling and one meaning on every forecast door.
+
+    ``gpuwm go`` had it; ``gpuwm sim`` and ``gpuwm run`` had only the
+    ``GPUWM_VERIFY_VISUALS`` variable, so a caller of those doors could not
+    find the switch for the CPU check that starts when the forecast ends
+    (2026-11-11, an outside runner: the check outlived the card lease).
+    """
+    parser.add_argument(
+        "--no-verify-visuals", action="store_false", dest="verify_visuals", default=None,
+        help="skip postforecast observation verification; the physical run is unchanged "
+             "(also GPUWM_VERIFY_VISUALS=0)")
+
+
+def requested(args=None) -> bool:
+    """The door's ``--no-verify-visuals`` when given, else ``GPUWM_VERIFY_VISUALS``."""
+    flag = getattr(args, "verify_visuals", None)
+    if flag is not None:
+        return bool(flag)
+    return os.environ.get("GPUWM_VERIFY_VISUALS", "1").lower() not in ("0", "false", "off")
 
 
 @contextmanager
@@ -851,6 +879,36 @@ def finish_run(root, *, sections=None) -> dict | None:
     return state
 
 
+def finish_line(state) -> str | None:
+    """The one line a finished forecast prints about its verification step.
+
+    The step used to be silent: a detached CPU process started after the last
+    model step and could outlive the forecast's card lease, and nothing named
+    it or its switch (2026-11-11, an outside runner's pool record
+    ``cpu-only-tail=2``).
+    """
+    if not isinstance(state, dict):
+        return None
+    record = Path(state["run_dir"]) / BACKGROUND_NAME if state.get("run_dir") else None
+    if state.get("pid"):
+        return (f"verification: CPU check queued as process {state['pid']} (no card), which "
+                f"may run on after this forecast exits; record {record}; "
+                f"--no-verify-visuals or GPUWM_VERIFY_VISUALS=0 skips it, and then the "
+                f"history is not made compact")
+    if state.get("status") == "pending" and state.get("reason"):
+        return f"verification: pending ({state['reason']}); later: {state.get('retry_command')}"
+    return None
+
+
+def _configured_cycle(config):
+    """The forecast's start time from its experiment TOML, as the worker reads it."""
+    if not config or Path(config).suffix.lower() != ".toml":
+        return None
+    import tomllib
+    metadata = tomllib.loads(Path(config).read_text(encoding="utf-8"))
+    return metadata.get("experiment", {}).get("start_time")
+
+
 def _finish_run(root, *, sections=None) -> dict | None:
     """Only the daemon launcher performs metadata I/O and process creation."""
     root = Path(root).resolve()
@@ -883,6 +941,10 @@ def _finish_run(root, *, sections=None) -> dict | None:
                "local_only": True, "foreground_cap_seconds": FINISH_FOREGROUND_SECONDS,
                "queued_at": _stamp(datetime.now(UTC)),
                "retry_command": f'gpuwm verify-visuals "{root}"'}
+        # A run whose hours are all still ahead queues the worker too: it
+        # makes the history's compact verification inputs and releases the
+        # .keep lease, which is work even when no hour can be scored yet
+        # (item 8 review; the worker is CPU only and holds no card).
         _atomic_json(root / BACKGROUND_NAME, job)
         env = os.environ.copy()
         env.update(CUDA_VISIBLE_DEVICES="", GPUWM_NO_LOCAL_GPU="1", GPUWM_VERIFY_VISUALS="0")
@@ -1088,10 +1150,8 @@ def _finish_worker(root, token, *, coverage_attempt=0):
             return 0
         cycle = job.get("cycle")
         config = job.get("config_path")
-        if cycle is None and config and Path(config).suffix.lower() == ".toml":
-            import tomllib
-            metadata = tomllib.loads(Path(config).read_text(encoding="utf-8"))
-            cycle = metadata.get("experiment", {}).get("start_time")
+        if cycle is None:
+            cycle = _configured_cycle(config)
         paths = [Path(path) for path in job.get("history_paths", [])]
         paths = [*histories_before_restart(paths, cycle), *paths]
         requests = discover_histories(root, paths=paths or None, cycle=cycle, include_missing=bool(paths))

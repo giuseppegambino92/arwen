@@ -57,6 +57,9 @@ class WrfinputRun:
     restart_paths: Mapping[int, Path] | None = None
     restart_clock: object | None = None
     restart_notes: tuple[str, ...] = ()
+    #: What ``--lake-state`` chose, as one sentence for plan review; None
+    #: when the flag was not given (the run keeps lake_state_source=auto).
+    lake_state_note: str | None = None
 
     @property
     def grid_ids(self) -> tuple[int, ...]:
@@ -267,8 +270,10 @@ def synthesize_wps_namelist(metadata: Mapping[int, WrfinputMetadata], *,
     def parent_id_column():
         """WPS spells the root's parent as ITSELF; WRF spells it 0.
 
-        ``&geogrid parent_id`` is 1 for domain 1 (WPS's own convention,
-        which gpuwm's WPS reader enforces), while ``real.exe`` stamps
+        ``&geogrid parent_id`` is 1 for domain 1 (WPS's own convention;
+        gpuwm's WPS reader also takes 0 and books it as normalized, so
+        writing 1 here keeps the synthesized file free of that advisory),
+        while ``real.exe`` stamps
         ``PARENT_ID = 0`` into the root wrfinput.  Same fact, two
         spellings; this is the one place they meet.  Children carry their
         real parent id through unchanged.
@@ -515,7 +520,9 @@ def resolve_wrfinput_run(directory: str | Path, *, name: str | None = None,
                          urban_ucm_generation: str | None = None,
                          urban_controls: dict | None = None,
                          check_projection: bool = True,
-                         restart_from: str | Path | None = None) -> WrfinputRun:
+                         restart_from: str | Path | None = None,
+                         lake_state: str | None = None,
+                         lake_state_path: str | Path | None = None) -> WrfinputRun:
     """Read, translate and CHECK one real.exe handoff.  No field is decoded.
 
     Every refusal this door owns fires here, on CPU, before any state
@@ -655,6 +662,9 @@ def resolve_wrfinput_run(directory: str | Path, *, name: str | None = None,
         from gpuwm.verify_exact.replay import set_toml_key
         for key, value in scheme_selectors.items():
             toml_text = set_toml_key(toml_text, key, value)
+    # --lake-state, through the one function the met_em door calls too.
+    from gpuwm.ingest.lake_state import select_lake_state
+    toml_text, lake_state_note = select_lake_state(toml_text, lake_state, lake_state_path)
     experiment = build_experiment(
         tomllib.loads(toml_text), source=f"{directory}:wrfinput")
     kind = "wrfrst" if warm else "wrfinput"
@@ -702,7 +712,8 @@ def resolve_wrfinput_run(directory: str | Path, *, name: str | None = None,
         substitution_report=report, wps_namelist_text=wps_text,
         restart_paths=(None if restart_paths is None
                        else MappingProxyType(dict(sorted(restart_paths.items())))),
-        restart_clock=restart_clock, restart_notes=restart_notes)
+        restart_clock=restart_clock, restart_notes=restart_notes,
+        lake_state_note=lake_state_note)
 
 
 #: WRF's &dynamics base-state constants and their Registry defaults

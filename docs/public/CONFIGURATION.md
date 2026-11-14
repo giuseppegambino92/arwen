@@ -655,6 +655,7 @@ wrong answer reported as a success. Put them in `[shared]`.
 | `spec_zone`, `relax_zone`, `spec_exp` | `&bdy_control` | 1, 4, 0.0 | | `spec_exp` acts on the root (specified) branch only, exactly as in WRF's `lbc_fcx_gcx`; nonzero on a nested child is refused. `gpuwm downscale --point` sets `relax_zone` to two parent cells and `spec_exp` to 0 |
 | `relax_timescale_s` | -- (ArWen) | 0.0 | >= 0 | Davies relaxation time scale in seconds on the first relaxed row: `fcx = ramp / relax_timescale_s`, `gcx = ramp / (5 relax_timescale_s)`. 0 is WRF's recipe (`0.1/dt`, `1/(50 dt)`, a time scale of 10 of the domain's own steps). A nest reads it in WRF's nested operation order. `gpuwm downscale --point` sets it to the time a 20 m/s flow takes to cross one child cell, never shorter than 10 child steps |
 | `relax_w` | -- (ArWen) | false | bool | a specified domain relaxes `w` toward its boundary table and takes the table's `w` on the specified rows, as a WRF nest does. False is WRF's root rule: `w` is not relaxed and the specified rows copy the first interior row. Needs a `w` table (an offline child's parent history carries `W`); without one the run stops at its first step saying so. `gpuwm downscale --point` sets it |
+| `lbc_hydrometeor_envelope_km` | -- (ArWen; WRF has no such key) | 25.0 | >= 0 | the stretch of edge, in km, over which a lateral-boundary hydrometeor mass (cloud, rain, ice, snow, graupel, with its paired number) must be present in BOTH forcing frames bracketing an interval for the root's specified ring to be fed it: the ring serves the smaller of the two frames, then the minimum over half this stretch either way along the edge, with zero tendency. 25 km (a deep convective cell) is the scale the hourly HRRR boundary-band defect was fixed with: a cell one frame caught was otherwise poured in from a fixed point for the whole interval. 0 feeds the prepared linear table as it is. With frames 3 h or more apart less of a moving cloud field is in both frames at one point, so less is served; the run record (`lateral_boundary_hydrometeors`) states the envelope and the fraction of the source's condensate the ring served, the dry run and the run-plan estimate state the envelope, and the stock-WRF export writes into `wrfbdy_d01` the tables served at the value the cache was prepared with (read by WRF only under `have_bcs_moist = .true.`; the key does not bind the cache, so a forecast at another value against the same cache is fed differently, and its own run record says so). Read only by a specified root whose source publishes hydrometeors |
 
 ### Physics cadences and scheme knobs
 
@@ -841,7 +842,12 @@ boundary and streamed-domain refusals, and the CLI evidence door
 table binds the restart identity; an absent table leaves every existing
 fingerprint untouched.
 
-### `[ingest]` -- soil-state ingest policy (ArWen-only)
+### `[ingest]` -- ingest policy (ArWen-only)
+
+Ingest policy every config can carry, with no `[case_data]` needed:
+`soil_texture_downscale` (below) and the GFS route's three preparation
+choices, `gfs_lake_ice`, `gfs_lake_skin` and `gfs_snow_convention`
+([GFS humidity, snow and model-top preparation](#gfs-humidity-snow-and-model-top-preparation)).
 
 This switch disables a deliberate divergence from WRF that removes the
 forcing grid's imprint from the initial soil state. Its measured scope is
@@ -1514,7 +1520,8 @@ A lake GFS does not resolve takes the skin temperature of the nearest GFS
 water, as WPS metgrid and real.exe give it. This is the default,
 `gfs_lake_skin = "wps"`. To give such lakes the 2 m air temperature instead,
 as the inland-water reach does for other routes, add
-`gfs_lake_skin = "air_temperature"` to the complete `[case_data]` table. Other
+`gfs_lake_skin = "air_temperature"` to the experiment's `[ingest]` table (a
+complete `[case_data]` table also accepts it). Other
 inland water (enclosed water that is not a land-use lake) keeps the inland-water
 reach either way, and the preparation log counts the cells it fills.
 
@@ -1534,14 +1541,20 @@ SHA-256. The analysis is fetched without a key into
 `~/.gpuwm/cache/surface-obs` (`GPUWM_SURFACE_OBS_CACHE` moves it). On a machine
 without network access, put the file there under its own name. When no
 analysis can be read, the run prints a warning that names each file it tried,
-and keeps the forcing's ice for that run only. `gfs_lake_ice = "wps"` in the
-complete `[case_data]` table keeps the forcing's ice outright, which is what
-WPS and real.exe give.
+and keeps the forcing's ice for that run only. The analysis is asked for only
+when a domain of the tree has land-use lake cells; a domain without any says so
+in one line and nothing is downloaded. `[ingest] gfs_lake_ice = "wps"` (or
+`gpuwm go --lake-ice wps`, which writes that key into the run's copy of the
+config) keeps the forcing's ice outright, which is what WPS and real.exe give,
+and fetches nothing. `gpuwm domain` writes `[ingest] gfs_lake_ice = "observed"`
+into every GFS config it emits, and `gpuwm go --dry-run` names the choice. A
+complete `[case_data]` table still accepts the key; the same key set to two
+values in `[ingest]` and `[case_data]` is refused.
 
 The GFS decoder defaults to the WPS snow convention: `SNOW = 2 * WEASD` and
 `SNOWH = 0.005 * SNOW`. To retain the raw GFS WEASD and separately supplied SNOD,
-add `gfs_snow_convention = "raw"` to the experiment's complete `[case_data]`
-table. The table's other required input declarations still apply. The decoder
+add `gfs_snow_convention = "raw"` to the experiment's `[ingest]` table (a
+complete `[case_data]` table also accepts it). The decoder
 records the convention and refuses a cached decoder result using another
 convention. Direct bridge callers can select the same behavior with
 `GPUWM_GFS_SNOW_CONVENTION=raw`; normal preparation uses the experiment policy.

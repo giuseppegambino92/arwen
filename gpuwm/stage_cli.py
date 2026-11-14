@@ -1311,8 +1311,12 @@ def sim_main(args) -> int:
                        "output frame as it lands")
     else:
         render_note = f"no fetch; frame maps disabled (--render-products {requested})"
-    if os.environ.get("GPUWM_VERIFY_VISUALS", "1").lower() not in {"0", "false", "off"}:
-        render_note += "; observation verification at finish as reports are available"
+    from gpuwm.verification_visuals import requested as verification_requested
+    from gpuwm.verification_visuals import verification_scope
+    verify = verification_requested(args)
+    if verify:
+        render_note += ("; observation verification at finish as reports are "
+                        "available (--no-verify-visuals skips it)")
     print(f"sim: {bundle.get('root', bundle['document'].parent)} -- "
           f"{bundle['schema']} "
           f"(source {bundle['source']}, "
@@ -1329,7 +1333,10 @@ def sim_main(args) -> int:
         from gpuwm import prepared_domain_tree_forecast as runner_module
     else:
         from gpuwm import prepared_single_domain_forecast as runner_module
-    code = runner_module.main(command[3:])
+    # The runner's finish hook reads the variable; the scope carries this
+    # door's --no-verify-visuals to it, as `gpuwm go` does.
+    with verification_scope(verify):
+        code = runner_module.main(command[3:])
     if code == 0 and plots:
         _finish_sim_pictures(outdir, requested, getattr(args, "render_dir", None),
                              explain=explain_enabled(args))
@@ -1468,6 +1475,8 @@ def register_cli(subparsers) -> None:
                           "history frame of every grid as it lands, while the "
                           "forecast runs: comma-separated catalog selectors, "
                           "'all', or 'none'. Omitted means no rendering")
+    from gpuwm.verification_visuals import add_argument as add_verification_argument
+    add_verification_argument(sim)
     sim.add_argument("--render-dir", type=Path, default=None, metavar="DIR",
                      help="picture directory (default OUTDIR/png); "
                           "ignored without --render-products")

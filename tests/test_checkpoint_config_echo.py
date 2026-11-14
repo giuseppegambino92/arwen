@@ -145,6 +145,10 @@ DEFAULT_OFF = frozenset({
     # 2.9.10: WRF's ghg_input at the engine's fixed gases (0), absent as in
     # a header written before the key (checkpoint_identity).
     "ghg_input",
+    # 3.0.2: the boundary hydrometeor envelope at 25 km, the constant every
+    # earlier run served with, is absent as in a header written before the
+    # key (checkpoint_identity).
+    "lbc_hydrometeor_envelope_km",
     "umove", "vmove",
     # 2.9.11: the Fitch wind-farm controls with farm physics off
     # (labs/windfarm, gpuwm.wind_table.drop_inert_config).

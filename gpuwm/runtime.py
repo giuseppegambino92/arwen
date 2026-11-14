@@ -475,6 +475,7 @@ def _write_runtime_report(outdir: Path, exp: ExperimentConfig, summary, *,
     ``runplan._chain_summary`` read no status, timing or hydro record from
     an ERA5 forecast.  Same file name and the same top-level keys.
     """
+    from gpuwm.surface_ocean import domains_ocean_receipt
     nan_free = bool(getattr(summary, "nan_free", False))
     health = {"nan_free": nan_free}
     for key in ("w_max_ms", "boundary_w_max_ms", "interior_w_max_ms",
@@ -495,6 +496,8 @@ def _write_runtime_report(outdir: Path, exp: ExperimentConfig, summary, *,
         "timing_seconds": {"total": float(wall_seconds)},
         "health": health,
         **(dict(summary.hydro_receipts) if summary.hydro_receipts else {}),
+        # The ocean each domain ran, in words, every run (door item 6).
+        "ocean": domains_ocean_receipt(domain.run for domain in exp.domains),
     }
     path = Path(outdir) / "report.json"
     tmp = path.with_name(f".report.json.{os.getpid()}.tmp")

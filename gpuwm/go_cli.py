@@ -941,6 +941,11 @@ def plan_from_config(config: Path, *, outdir: Path | None = None,
         # printed rw-wps line and run-plan's refusal all read the same
         # sentence out of one place.
         "statics_corridor": config_declares_follow_source(experiment),
+        # What the lakes will start from, said before anything is spent
+        # (defect 5 of the 2026-11-12 runner list: an auto lake request
+        # that failed was one stderr line and the plan never named it).
+        "lake_state_sentence": _lake_state_sentence(
+            experiment, area=str(fetch_table["area"])),
     }
     if any(domain.run.chem_sets for domain in experiment.domains):
         plan["chem_data_store_sources"] = chem_data_store_sources(experiment)
@@ -955,6 +960,12 @@ def plan_from_config(config: Path, *, outdir: Path | None = None,
     # claim=True made the folder above, so the namelist lands in it now.
     return _render_plan_wps(plan) if claim else plan
 
+
+
+def _lake_state_sentence(experiment, *, area: str | None) -> str:
+    """The plan's lake-state line for the root domain (lake keys are [shared])."""
+    from gpuwm.ingest.lake_state import experiment_plan_sentence
+    return "go: " + experiment_plan_sentence(experiment, area=area)
 
 
 def chem_window(experiment, *, forcing_hours: float = 0) -> tuple[str, str]:
@@ -3825,6 +3836,23 @@ def _partial_tree_note(root) -> str:
             f"reads it, so it is safe to remove once you are done with "
             f"it.  Every stage is create-only, so a re-run needs a new "
             f"--outdir either way.")
+
+
+def _plan_run_configs(plan: dict) -> list:
+    """The per-domain RunConfigs of the plan's config, root first ([] if none)."""
+    from gpuwm.surface_ocean import config_run_configs
+    return config_run_configs(plan.get("config"))
+
+
+def _ocean_plan_lines(plan: dict) -> list[str]:
+    """The banner's ocean lines (door item 6): what the run's ocean is, and
+    the long-run offer, in the dry run and the real run alike.  A config the
+    banner cannot read prints nothing here, as for the experimental labels:
+    the loader that diagnoses it runs a moment later."""
+    from gpuwm.surface_ocean import config_ocean_lines
+    return config_ocean_lines(plan.get("config"), prefix="go: ocean: ")
+
+
 def _experimental_labels(plan: dict) -> tuple[str, ...]:
     """(label, reason) for the experimental options this plan selects.
 
@@ -3835,17 +3863,9 @@ def _experimental_labels(plan: dict) -> tuple[str, ...]:
     loader that IS that place runs a moment later.
     """
     try:
-        from gpuwm.experiment import is_experiment_toml, load_experiment
         from gpuwm.physics_compat import _experimental_components
 
-        path = plan.get("config")
-        if path is None:
-            return ()
-        if is_experiment_toml(path):
-            configs = [dc.run for dc in load_experiment(path).domains]
-        else:
-            from gpuwm.config import load_config
-            configs = [load_config(path)]
+        configs = _plan_run_configs(plan)
         clauses: dict[str, str] = {}
         for cfg in configs:
             for label, reason in _experimental_components(cfg):
@@ -3941,6 +3961,35 @@ def _physics_words(plan: dict) -> str:
         return f"profile {plan['profile']}"
     return ("physics from the config as written (supported, not yet "
             "WRF-verified)")
+
+
+def _boundary_hydrometeor_note(plan: dict) -> str | None:
+    """The dry run's line on the boundary hydrometeors: what the source
+    publishes and the envelope the ring will serve them with
+    (lateral_bc.hydrometeor_ring_plan).  None when the source publishes
+    none.  A config that cannot be read here is diagnosed by the loader
+    that runs a moment later, so it gives no line rather than a wrong one,
+    and the dry run says that it could not tell."""
+    try:
+        from gpuwm.boundary_fields import source_boundary_species
+        from gpuwm.experiment import is_experiment_toml, load_experiment
+        from gpuwm.ingest.lateral_bc import hydrometeor_ring_plan
+
+        species = source_boundary_species(plan.get("source"))
+        if not species:
+            return None
+        path = plan.get("config")
+        if is_experiment_toml(path):
+            cfg = load_experiment(path).domains[0].run
+        else:
+            from gpuwm.config import load_config
+            cfg = load_config(path)
+        ring = hydrometeor_ring_plan(cfg, species)
+        return None if ring is None else ring["sentence"]
+    except Exception as error:   # noqa: BLE001 -- the loader diagnoses it
+        return ("boundary hydrometeors: the envelope could not be read from "
+                f"the config here ({type(error).__name__}); the run record "
+                "states it")
 
 
 def memory_refusal_text(gate: dict) -> str:
@@ -4248,7 +4297,8 @@ def memory_gate(plan: dict, *, vram_gib: float | None = None,
     if (phases.peak_envelope_bytes > free and not phases.streamed_forecast
             and len(exp.domains) == 1
             and not getattr(getattr(exp, "devices", None), "enabled", False)):
-        from gpuwm.core.preflight import (mynn_width_adjustable,
+        from gpuwm.core.preflight import (MYNN_NARROWED_NOTE,
+                                          mynn_width_adjustable,
                                           required_mynn_pricing)
         if mynn_width_adjustable(exp):
             with required_mynn_pricing(exp):
@@ -4265,10 +4315,8 @@ def memory_gate(plan: dict, *, vram_gib: float | None = None,
             if (not narrow.streamed_forecast
                     and narrow.peak_envelope_bytes <= free):
                 phases = narrow
-                mynn_note = ("priced at the narrowest MYNN column width: the "
-                             "width the run would pick does not fit, so the "
-                             "forecast walks the widest width that does "
-                             "(speed, never bytes)")
+                # One sentence, shared with gpuwm check (door item 3).
+                mynn_note = MYNN_NARROWED_NOTE
     # The budget the ENVELOPE is compared against, from the wizard's own
     # seam so the two doors cannot disagree about one card.  It is free
     # VRAM minus what this process's envelope does not model -- other
@@ -4994,6 +5042,17 @@ def _registered_launch(args, *, config: Path, payload: dict,
     if str(options["render_products"]).strip().lower() != "none":
         stages.append("render")
     print(f"go: {source}, {len(exp.domains)} domain(s); " + " -> ".join(stages))
+    from gpuwm.surface_ocean import domains_ocean_lines
+    for line in domains_ocean_lines((dc.run for dc in exp.domains),
+                                    prefix="go: ocean: "):
+        print(line)
+    # What the root's ring will be fed of the source's hydrometeors, and
+    # the envelope key that decides it (lateral_bc.hydrometeor_ring_plan).
+    from gpuwm.boundary_fields import source_boundary_species
+    from gpuwm.ingest.lateral_bc import hydrometeor_ring_plan
+    ring = hydrometeor_ring_plan(exp.domains[0].run, source_boundary_species(source))
+    if ring is not None:
+        print(f"go: {ring['sentence']}")
     pinned_line = (transport_note(pinned, pinned_from, fetch.get("transport"))
                    if bundle is None else None)
     if pinned_line is not None:
@@ -5001,6 +5060,7 @@ def _registered_launch(args, *, config: Path, payload: dict,
     if getattr(getattr(exp, "devices", None), "enabled", False):
         from gpuwm.core.devices import describe_split
         print("go: " + describe_split(exp))
+    print(_lake_state_sentence(exp, area=fetch.get("area")))
     if args.dry_run:
         if getattr(getattr(exp, "devices", None), "enabled", False):
             gate = memory_gate({"config": config, "source": source,
@@ -5355,31 +5415,183 @@ def _at_flag_tiles(args, config: Path, payload: dict) -> tuple[Path, dict]:
     declared = payload.get("tiles")
     if isinstance(declared, dict) and declared.get("mode") == mode:
         return config, payload
+
+    def edit(raw):
+        # Pinned tilings and store choices ride along under 'on'; 'auto' and
+        # 'off' take the bare mode, which is what the planner decides from.
+        table = dict(raw.get("tiles") or {}) if mode == "on" else {}
+        table["mode"] = mode
+        raw["tiles"] = table
+
+    out, loaded = _restated_fetching_config(
+        args, config, fetch_table, flag=f"--tiles {mode}",
+        subdir=Path("tiles") / mode, edit=edit)
+    print(f"go: --tiles {mode}: {config} re-stated with [tiles] mode = "
+          f"'{mode}', as {out}")
+    return out, loaded
+
+
+def _restated_fetching_config(args, config: Path, fetch_table: dict, *,
+                              flag: str, subdir: Path, edit) -> tuple[Path, dict]:
+    """A fetching config re-stated under ``<outdir>/<subdir>/`` with ``edit``.
+
+    The --cycle mechanism at the config's own cycle (its route files come
+    along), then ``edit(raw)`` changes the parsed tables in place and the
+    file is written back.  ``args.config`` moves to the copy.
+    """
+
+    import tomllib
+
     from gpuwm.companion_setups import retime_to_cycle
     from gpuwm.fetch import parse_cycle
     from gpuwm.toml_document import emit_experiment_toml
 
     if getattr(args, "outdir", None) is None:
         args.outdir = config.parent / f"{config.stem}-go"
-    out = Path(args.outdir) / "tiles" / mode / config.name
+    out = Path(args.outdir) / subdir / config.name
     source = str(fetch_table["source"])
     try:
         retime_to_cycle(config, parse_cycle(str(fetch_table["cycle"]), source), out)
     except ValueError as error:
-        raise GoRefusal(f"--tiles {mode}: {error}") from error
+        raise GoRefusal(f"{flag}: {error}") from error
     raw = tomllib.loads(out.read_text(encoding="utf-8"))
-    # Pinned tilings and store choices ride along under 'on'; 'auto' and
-    # 'off' take the bare mode, which is what the planner decides from.
-    table = dict(raw.get("tiles") or {}) if mode == "on" else {}
-    table["mode"] = mode
-    raw["tiles"] = table
+    edit(raw)
     text = emit_experiment_toml(raw)
     if out.read_text(encoding="utf-8") != text:
         out.write_text(text, encoding="utf-8")
-    print(f"go: --tiles {mode}: {config} re-stated with [tiles] mode = "
-          f"'{mode}', as {out}")
     args.config = out
     return out, tomllib.loads(text)
+
+
+def _at_flag_lake_ice(args, config: Path, payload: dict) -> tuple[Path, dict]:
+    """The config with ``gpuwm go --lake-ice`` written into its [ingest].
+
+    The GFS route reads its lake-ice choice from ``[ingest] gfs_lake_ice``
+    (gpuwm.case_data.gfs_preparation_policy).  Before this flag and that
+    key the choice lived only in ``[case_data]``, which a GFS config from
+    `gpuwm domain` does not carry and cannot carry without the ERA5
+    route's inputs, so the prepared GFS route always downloaded the IMS
+    analysis and nothing could stop it (door item 7).  The config is
+    re-stated as --tiles does it.
+    """
+
+    choice = getattr(args, "lake_ice", None)
+    if choice is None:
+        return config, payload
+    if _prepared_launch(args):
+        # Breakage it prevents: a prepared bundle's lake ice was decided by
+        # its preparation and its config is hash-bound, so the flag would be
+        # read by nothing.
+        raise GoRefusal(
+            f"--lake-ice {choice} is a preparation choice, and this launch "
+            "runs a prepared bundle, which keeps the lake ice it was prepared "
+            f"with. Next: gpuwm go CONFIG --lake-ice {choice} with the "
+            "source configuration.")
+    if "case_data" in payload:
+        # Breakage it prevents: a [case_data] config cannot be re-stated in
+        # another folder (its forcing paths are its own).
+        raise GoRefusal(
+            f"--lake-ice {choice} re-states the config's [ingest] in a copy, "
+            "and this config names its input files in [case_data], which a "
+            f"copy cannot carry. Next: set [ingest] gfs_lake_ice = '{choice}' "
+            f"in {config} and launch it again.")
+    fetch_table = payload.get("fetch")
+    if not isinstance(fetch_table, dict) or not {"source", "cycle"} <= fetch_table.keys():
+        raise GoRefusal(
+            f"--lake-ice {choice} re-states a fetching config's [ingest], and "
+            f"{config} has no [fetch] source and cycle. Next: set [ingest] "
+            f"gfs_lake_ice = '{choice}' in it.")
+    from gpuwm.runplan import prepares_on_gfs_route
+    if not prepares_on_gfs_route(
+            fetch_table["source"],
+            source_root=getattr(args, "data_dir", None) or fetch_table.get("source_root")):
+        # Breakage it prevents: only the GFS route freezes lakes from the
+        # observed analysis, so on any other source the flag would be read
+        # by nothing and the run would say it had obeyed.
+        raise GoRefusal(
+            f"--lake-ice chooses the GFS route's lake ice, and source "
+            f"{fetch_table['source']!r} does not prepare on that route. "
+            "Next: drop --lake-ice.")
+    declared = payload.get("ingest")
+    if isinstance(declared, dict) and declared.get("gfs_lake_ice") == choice:
+        return config, payload
+
+    def edit(raw):
+        raw["ingest"] = {**dict(raw.get("ingest") or {}), "gfs_lake_ice": choice}
+
+    out, loaded = _restated_fetching_config(
+        args, config, fetch_table, flag=f"--lake-ice {choice}",
+        subdir=Path("lake-ice") / choice, edit=edit)
+    print(f"go: --lake-ice {choice}: {config} re-stated with [ingest] "
+          f"gfs_lake_ice = '{choice}', as {out}")
+    return out, loaded
+
+
+def unread_gfs_ingest_note(payload: dict, *, source_root=None) -> str | None:
+    """One WARNING for GFS-route ``[ingest]`` keys the launch's route never reads.
+
+    ``gfs_lake_ice``, ``gfs_lake_skin`` and ``gfs_snow_convention`` are read
+    by the GFS preparation alone (gpuwm.case_data.gfs_preparation_policy,
+    called only by gpuwm.gfs_direct).  The loader accepts them on any
+    config, so on an HRRR, RAP or ERA5 config ``[ingest] gfs_lake_ice =
+    "wps"`` was read by nothing and the run said nothing (door item 7
+    follow-up): a user who set it to keep the forcing's lake ice could not
+    tell it had no effect.  ``gpuwm go --lake-ice`` already refuses on those
+    sources; a key in the file is said once instead of refused, because it
+    harms nothing and a config may be shared between sources.
+
+    Said, not made to apply: the other routes start lakes from their own
+    forcing's ice, skin and snow, and the IMS freeze exists to correct the
+    lakes GFS does not resolve; applying it to HRRR, which carries its own
+    lake ice, would change a plain HRRR run and is not what the key names.
+    """
+
+    declared = payload.get("ingest")
+    if not isinstance(declared, dict):
+        return None
+    from gpuwm.case_data import GFS_PREPARATION_DEFAULTS
+    keys = [key for key, _default in GFS_PREPARATION_DEFAULTS if key in declared]
+    if not keys:
+        return None
+    fetch = payload.get("fetch") if isinstance(payload.get("fetch"), dict) else {}
+    source = fetch.get("source")
+    from gpuwm.runplan import prepares_on_gfs_route
+    if source and prepares_on_gfs_route(
+            source, source_root=source_root or fetch.get("source_root")):
+        return None
+    named = ", ".join(f"{key} = {declared[key]!r}" for key in keys)
+    where = (f"source {source!r} does not prepare on it" if source else
+             "this config names no [fetch] source that prepares on it")
+    return (f"go: WARNING [ingest] {named}: only the GFS route's preparation "
+            f"reads {'this key' if len(keys) == 1 else 'these keys'}, and {where}, "
+            "so it changes nothing in this run; this route takes lake ice, lake "
+            "skin and snow from its own forcing. Remove it from [ingest] to "
+            "silence this.")
+
+
+def lake_ice_sentence(config) -> str | None:
+    """What the GFS preparation will do about lake ice, in one line.
+
+    ``None`` when the config cannot be read for it (its own loader then
+    reports why).  Printed by the GFS dry run, so the plan states the
+    choice before anything is downloaded (door item 7).
+    """
+
+    from gpuwm.case_data import (
+        gfs_preparation_policy_from_config, optional_case_data_from_config)
+    try:
+        policy = gfs_preparation_policy_from_config(
+            config, optional_case_data_from_config(config))
+    except (OSError, ValueError):
+        return None
+    if policy["gfs_lake_ice"] == "wps":
+        return ("go: lake ice: wps -- lakes keep the forcing's own ice (as WPS "
+                "and real.exe give it); no lake-ice analysis is fetched.")
+    return ("go: lake ice: observed -- the IMS daily snow and ice analysis "
+            "(NSIDC, 1 km) is fetched at preparation only if a domain has "
+            "land-use lake cells, and freezes the lakes it sees frozen; "
+            "--lake-ice wps or [ingest] gfs_lake_ice = \"wps\" keeps the "
+            "forcing's ice and fetches nothing.")
 
 
 def _streams_instead(args, gate: dict, config: Path,
@@ -6041,7 +6253,9 @@ def _go_config_main(args, *, observer=None) -> int:
         command = ["run", "--met-em", str(native), "--outdir", str(
             getattr(args, "outdir", None) or native/"gpuwm-go")]
         for key, flag in (("restart", "--restart"), ("render_products", "--products"),
-                          ("members", "--members"), ("run_seconds", "--run-seconds")):
+                          ("members", "--members"), ("run_seconds", "--run-seconds"),
+                          ("lake_state", "--lake-state"),
+                          ("lake_state_path", "--lake-state-path")):
             value = getattr(args, key, None)
             if value is not None:
                 command.extend((flag, str(value)))
@@ -6054,13 +6268,10 @@ def _go_config_main(args, *, observer=None) -> int:
                 command.append(flag)
         if getattr(args, "explain", False):
             command.append("--explain")
-        # run has no visual-verification parser flag. Preserve go's
-        # explicit setting in the existing finish-hook environment.
-        from contextlib import nullcontext
-        from gpuwm.verification_visuals import verification_scope
-        visuals = getattr(args, "verify_visuals", None)
-        with (nullcontext() if visuals is None else verification_scope(visuals)):
-            return cli_main(command)
+        # go's --no-verify-visuals is run's own flag, same meaning.
+        if getattr(args, "verify_visuals", None) is False:
+            command.append("--no-verify-visuals")
+        return cli_main(command)
     from gpuwm.earth2_licensing import check_namespace
     check_namespace(args)
     if getattr(args, "config", None) is not None and Path(args.config).is_dir():
@@ -6517,6 +6728,10 @@ def _go_launch(args, *, observer=None) -> int:
         config, payload = _at_flag_cycle(args, config, payload, cycle)
     _hydro_cycle_applied(args)
     config, payload = _at_flag_tiles(args, config, payload)
+    config, payload = _at_flag_lake_ice(args, config, payload)
+    unread = unread_gfs_ingest_note(payload, source_root=getattr(args, "data_dir", None))
+    if unread is not None:
+        print(unread, file=sys.stderr)
     from gpuwm.spectral_nudging.cli import at_flag as at_flag_nudging
     config, payload = at_flag_nudging(args, config, payload)
     from gpuwm.smoke_execution import (
@@ -6914,7 +7129,12 @@ def _go_prepared_main(args, *, observer=None) -> int:
         print(f"go: {plan['config']} -- source {plan['source']}, cycle "
               f"{plan['cycle']}, {plan['hours']} h of forcing, "
               f"{_physics_words(plan)}{_lead_note(plan)}")
+        for line in _ocean_plan_lines(plan):
+            print(line)
         print(_run_folder_note(plan))
+        ring = _boundary_hydrometeor_note(plan)
+        if ring is not None:
+            print(f"go: {ring}")
         pinned = transport_note(plan.get("transport"), plan.get("transport_from"),
                                 plan.get("transport_table"))
         if pinned is not None:
@@ -6923,6 +7143,15 @@ def _go_prepared_main(args, *, observer=None) -> int:
             print(f"go: {plan['devices_sentence']}")
         if plan.get("tiles"):
             print(f"go: {plan['tiles']['sentence']}")
+        # The GFS route's lake-ice line, on that route only: on another
+        # source it named an IMS fetch that never happens.
+        from gpuwm.runplan import prepares_on_gfs_route
+        lake_ice = (lake_ice_sentence(plan["config"]) if prepares_on_gfs_route(
+            plan.get("source"), source_root=getattr(args, "data_dir", None)) else None)
+        if lake_ice is not None:
+            print(lake_ice)
+        if plan.get("lake_state_sentence"):
+            print(plan["lake_state_sentence"])
         if plan.get("devices"):
             gate = memory_gate(plan)
             print(gate["verdict"])
@@ -7028,6 +7257,8 @@ def _go_prepared_main(args, *, observer=None) -> int:
     print(f"go: {plan['config']} -- source {plan['source']}, cycle "
           f"{plan['cycle']}, {plan['hours']} h of forcing, {_physics_words(plan)}"
           f"{_lead_note(plan)}")
+    for line in _ocean_plan_lines(plan):
+        print(line)
     pinned = transport_note(plan.get("transport"), plan.get("transport_from"),
                             plan.get("transport_table"))
     if pinned is not None:
@@ -7052,6 +7283,8 @@ def _go_prepared_main(args, *, observer=None) -> int:
         print(f"go: {plan['devices_sentence']}")
     if plan.get("tiles"):
         print(f"go: {plan['tiles']['sentence']}")
+    if plan.get("lake_state_sentence"):
+        print(plan["lake_state_sentence"])
 
     # The interrupt contract covers the gate too: the memory probe
     # is a real subprocess (first-run staging), and a Ctrl-C landing
@@ -7600,6 +7833,12 @@ def _add_go_arguments(parser) -> None:
                         help="keep selected scheduled WRF-input checkpoints (WRF valid times or end)")
     parser.add_argument("--nudging", choices=("off", "spectral", "grid"),
                         help="relax toward prepared source analyses; spectral keeps only the configured large-scale modes")
+    parser.add_argument("--lake-ice", choices=("observed", "wps"), default=None,
+                        dest="lake_ice",
+                        help="GFS route lake ice: observed (default) freezes lakes the "
+                             "IMS daily analysis sees frozen, fetched only when a domain "
+                             "has lakes; wps keeps the forcing's ice and fetches nothing. "
+                             "Written as [ingest] gfs_lake_ice")
     parser.add_argument("--wrfinput", type=Path, default=None, metavar="DIR",
                         help="run a stock real.exe directory containing namelist.input, "
                              "wrfinput_d0N and wrfbdy_d01 through the shared WRF forecast route")
@@ -7817,8 +8056,8 @@ def _add_go_arguments(parser) -> None:
                              "catalog), or 'none' to stop after the "
                              "forecast.  The same spelling `gpuwm render "
                              "--products` takes")
-    parser.add_argument("--no-verify-visuals", action="store_false", dest="verify_visuals", default=None,
-                        help="skip postforecast observation verification; the physical run is unchanged")
+    from gpuwm.verification_visuals import add_argument as add_verification_argument
+    add_verification_argument(parser)
     parser.add_argument("--grib2", action="store_true",
                         help="write native surface and pressure-level GRIB2 as each frame lands, "
                              "then <run>/grib2-grib2.zip")

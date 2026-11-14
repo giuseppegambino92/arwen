@@ -125,11 +125,9 @@ class RunConfig:
             object.__setattr__(self, "mp_physics", resolve_mp_physics(self.mp_physics))
         # Resolve the generation after named microphysics so partial
         # number mixing has the same meaning through either run door.
-        if self.bl_pbl_physics == 5 and self.bl_mynn_version == "wrf_461":
-            changed = any(getattr(self, k) != v for k, v in MYNN_PBL_OPTION_IDENTITY.items())
-            partial = self.bl_mynn_mixscalars == 1 and self.mp_physics in MYNN_QN_FLAG_SPECIES and self.mp_physics not in MYNN_QN_FAMILY_SCHEMES and bool(MYNN_QN_FLAG_SPECIES[self.mp_physics])
-            if changed or self.bl_mynn_mixlength == 0 or self.tke_budget or partial:
-                object.__setattr__(self, "bl_mynn_version", "wrf_471")
+        resolved_version = resolve_mynn_version(self, self.bl_mynn_version)
+        if resolved_version != self.bl_mynn_version:
+            object.__setattr__(self, "bl_mynn_version", resolved_version)
         # WRF v4.8.0's GFL (cu_gf_version default) never writes KTOP_DEEP, so
         # PR92 lightning from the cumulus cloud top stays on the previous pin's
         # GFDRV, which writes it (gpuwm/core/gfl.py, upstream defect 1).
@@ -2365,6 +2363,22 @@ class RunConfig:
     # 0 inherits opt_run. Normalized in __post_init__ (see there).
     opt_runsrf: int = _config_field(default=0, kw_only=True)
     opt_runsub: int = _config_field(default=0, kw_only=True)
+    #: The stretch of edge, in km, over which a lateral-boundary hydrometeor
+    #: mass (qc qr qi qs qg, with its paired number) must be present in BOTH
+    #: forcing frames bracketing an interval for the root's specified ring to
+    #: serve it (gpuwm.ingest.lateral_bc.hold_hydrometeor_ring_envelope): the
+    #: ring serves the smaller of the two frames, then the minimum over half
+    #: this stretch either way along the edge, with zero tendency.  25 km, a
+    #: deep convective cell's diameter, is the scale the hourly HRRR boundary
+    #: band defect was fixed with (29 Oct 12Z, 2.25 km: 40-46 dBZ bands from
+    #: a cell one frame caught; 1.54 g/kg fed with the time hold alone, 0.12
+    #: with both).  0 serves the prepared linear table as it is, which brings
+    #: a cell caught in one frame in from a fixed point for the whole
+    #: interval.  The run record states the value and the fraction of the
+    #: source's condensate the ring served.  Read only by a specified domain
+    #: whose boundary carries hydrometeors; appended last, keyword-only, and
+    #: absent from the restart identity at its default.
+    lbc_hydrometeor_envelope_km: float = _config_field(default=25.0, kw_only=True)
 
 @dataclass(frozen=True)
 class _DfiBackwardRunConfig(RunConfig):
@@ -2944,6 +2958,165 @@ def validate_mynn_generation_spp(cfg) -> None:
             "kernels are specialised from the WRF v4.6.1 source only, so "
             "the gsd_41 rows (dew flux, mixing length) would be absent from "
             "every perturbed step while the run claimed them.")
+
+
+#: The fields :func:`validate_shallow_cumulus_config` reads, so a door that
+#: holds settings rather than a ``RunConfig`` can hand it exactly those.
+SHALLOW_CUMULUS_FIELDS = ("shcu_physics", "bl_pbl_physics", "bl_mynn_edmf",
+                          "cu_physics", "icloud", "icloud_bl", "moist",
+                          "moist_cq", "mp_physics")
+
+
+def validate_shallow_cumulus_config(cfg) -> None:
+    """The shallow-cumulus pairings, asked by both doors.
+
+    ``validate_run_config`` calls this where it held the same lines, and
+    plan review (``gpuwm.physics_registry.validate_physics_plan``) calls it
+    on the settings a plan resolves.  Plan review carried none of these
+    pairings, and ``shcu_physics`` is a per-domain setting every prepared
+    route offers, so 3,936 of 84,932 reachable plans were called launchable
+    and refused at run start (tests/test_authority_agreement.py; that walk
+    had been ending in an error before it could report them).
+    """
+    if type(cfg.shcu_physics) is not int or cfg.shcu_physics not in (0, 1, 2, 3, 4, 5):
+        raise ConfigurationRefused("shcu_physics must be 0 (off), 1 (G3 native no-op), 2 (UW), 3 (GRIMS), 4 (NSCV), or 5 (Deng)")
+    from gpuwm.shallow_cumulus import shallow_refusal
+    why = shallow_refusal(cfg.shcu_physics, cfg.bl_pbl_physics,
+                          cfg.bl_mynn_edmf, cfg.cu_physics,
+                          icloud=cfg.icloud, icloud_bl=cfg.icloud_bl)
+    if why:
+        raise ConfigurationRefused(why)
+    if cfg.shcu_physics in (3, 4, 5) and not cfg.moist:
+        raise ConfigurationRefused("shallow convection requires a water-vapour carrier")
+    if cfg.shcu_physics == 5 and not cfg.moist_cq:
+        raise ConfigurationRefused("Deng requires QC and QR condensate carriers")
+    if cfg.shcu_physics == 2 and not (cfg.moist and cfg.moist_cq):
+        raise ConfigurationRefused("UW shallow convection requires moist condensate carriers")
+    if cfg.shcu_physics == 2 and cfg.mp_physics not in (2,4,5,6,8,9,10,11,16,18,24,28,30,50,106,900):
+        raise ConfigurationRefused("WRF UW shallow convection requires the QI carrier (module_shallowcu_driver.F:519-522)")
+
+
+# The laws below were lines of validate_run_config.  Each is now one
+# function that the run door calls where its lines were and plan review
+# (gpuwm.physics_registry.validate_physics_plan) calls on the settings a
+# plan resolves.  The prepared-tree route offers each setting as a free
+# per-domain parameter, and plan review carried none of these laws, so
+# 728 of 84,932 reachable plans (1,456 domains) were called launchable and
+# refused at run start (tests/test_authority_agreement.py, 2026-11-12).  One wording,
+# one law, the same way validate_shallow_cumulus_config is shared.
+
+def validate_shalconv_config(cfg) -> None:
+    """``shalconv`` is CU_SAS's switch and nothing else reads it.
+
+    The refusal outside SAS prevents a record that names a shallow-branch
+    choice no scheme in the run makes: under any other cumulus the value
+    reaches no code, so ``shalconv = 0`` would read as "no shallow
+    convection" while the selected scheme's own shallow branch still runs.
+    """
+    if cfg.cu_physics == SAS_CU_PHYSICS:
+        if type(cfg.shalconv) is not int or cfg.shalconv not in (0, 1):
+            raise ValueError("shalconv must be 0 or 1: CU_SAS executes the shallow branch only at 1")
+    elif cfg.shalconv != 1:
+        raise ValueError("shalconv is consumed only by cu_physics=94; leave it at 1 otherwise")
+
+
+def validate_bmj_rad_feedback_config(cfg) -> None:
+    """BMJ's convective cloud reaches radiation only from BMJ, and only
+    through a radiation adapter that merges it.
+
+    Prevents a run whose record says the radiation sees convective cloud
+    when no cloud field is published (another cumulus scheme) or no
+    adapter reads it (the analytic clear-sky adapter).
+    """
+    if type(cfg.bmj_rad_feedback) is not bool:
+        raise ValueError("bmj_rad_feedback must be bool")
+    if cfg.bmj_rad_feedback:
+        if cfg.cu_physics not in COLUMN_KERNEL_CU_SCHEMES:
+            raise ValueError("bmj_rad_feedback requires cu_physics=2: other schemes do not publish BMJ cloud fields")
+        if not bmj_feedback_radiation_supported(radiation_scheme_ids(cfg)):
+            raise ValueError("bmj_rad_feedback requires physical cloud radiation or disabled streams: the selected radiation adapter does not merge the carried convective cloud")
+
+
+def resolve_mynn_version(cfg, version: str) -> str:
+    """The MYNN generation a ``RunConfig`` resolves ``version`` to.
+
+    ``RunConfig`` promotes the default ``wrf_461`` to ``wrf_471`` on a MYNN
+    domain that names a 4.7.1-only control (an identity key off its pin,
+    ``bl_mynn_mixlength = 0``, the TKE budget, or partial number mixing).
+    It calls this, and so does plan review, which judges the identity law
+    on the generation the run will hold.  ``cfg.mp_physics`` must already
+    be a number; ``cfg.bl_mynn_version`` is not read.
+    """
+    if cfg.bl_pbl_physics == 5 and version == "wrf_461":
+        changed = any(getattr(cfg, k) != v for k, v in MYNN_PBL_OPTION_IDENTITY.items())
+        partial = cfg.bl_mynn_mixscalars == 1 and cfg.mp_physics in MYNN_QN_FLAG_SPECIES and cfg.mp_physics not in MYNN_QN_FAMILY_SCHEMES and bool(MYNN_QN_FLAG_SPECIES[cfg.mp_physics])
+        if changed or cfg.bl_mynn_mixlength == 0 or cfg.tke_budget or partial:
+            return "wrf_471"
+    return version
+
+
+def validate_mynn_option_identity(cfg) -> None:
+    """MYNN's suboptions must name a branch the selected column implements.
+
+    Prevents a nearby branch running under the name of an unported one.
+    ``icloud_bl`` is held to the identity only on a MYNN domain
+    (``bl_pbl_physics = 5``): it is WRF's switch for merging MYNN's subgrid
+    cloud into radiation and the GSD diagnostics: the radiation readers gate
+    it on an active MYNN (gpuwm.core.mynn_radiation.mynn_bl_cloud_active),
+    the GSD kernel merges only where MYNN's CLDFRA_BL is set (zero without
+    MYNN), and Deng requires 0 under MYJ as well.  Outside MYNN, 0 and 1
+    give the same run and 0 says what the run does, so no branch can be
+    substituted there; the namelist door already scoped it this way.
+    Refusing it outside MYNN named no breakage and refused 128 reachable
+    plans at run start.
+    """
+    for name, admitted in MYNN_PBL_OPTION_IDENTITY.items():
+        value = getattr(cfg, name)
+        if name == 'icloud_bl' and cfg.shcu_physics == 5 and value == 0 and type(value) is int:
+            continue
+        if name == 'icloud_bl' and cfg.bl_pbl_physics != 5:
+            if type(value) is not int or value not in (0, 1):
+                raise ConfigurationRefused(
+                    f"icloud_bl={value!r} must be the integer 0 or 1")
+            continue
+        if type(value) is not type(admitted) or (value not in MYNN471_OPTION_VALUES[name] if cfg.bl_mynn_version == "wrf_471" else value != admitted):
+            if cfg.bl_mynn_version == "wrf_480" and type(value) is type(admitted) and value in MYNN471_OPTION_VALUES[name]:
+                # Implemented by the 4.8.0 column, but only the default
+                # identity has a native 4.8.0 replay witness so far.
+                raise ConfigurationRefused(
+                    f"{name}={value!r} with bl_mynn_version='wrf_480': the WRF 4.8.0 "
+                    "MYNN column is replay-qualified against native 4.8.0 for the "
+                    "default option identity only; this setting would run "
+                    "unqualified code under the 4.8.0 name. Use wrf_471 for it.")
+            implemented = (
+                f"{name} in {MYNN471_OPTION_VALUES[name]!r}"
+                if cfg.bl_mynn_version == "wrf_471" else f"{name}={admitted!r}")
+            raise ConfigurationRefused(
+                f"{name}={value!r} is outside the admitted MYNN option "
+                f"identity; gpuwm implements {implemented} only, and "
+                "no nearby branch is substituted for an unported one."
+            )
+
+
+def validate_tke_budget_config(cfg) -> None:
+    """The TKE budget is implemented for the km_opt=2 closure and for MYNN.
+
+    Prevents a budget that omits terms: under any other closure (km_opt=4,
+    SMS-3DTKE's implicit transport and dissipation) the accumulated terms
+    would not sum to the TKE the run carries.
+    """
+    if cfg.tke_budget not in (0, 1):
+        raise ConfigurationRefused(
+            f"tke_budget must be 0 (off) or 1 (per-step term-by-term TKE "
+            f"budget accumulation), got {cfg.tke_budget}."
+        )
+    if cfg.tke_budget == 1 and cfg.km_opt != 2 and cfg.bl_pbl_physics != 5:
+        raise ConfigurationRefused(
+            "tke_budget=1 requires km_opt=2 or bl_pbl_physics=5: the implemented budget "
+            "accumulates that closure's explicit source terms. It does "
+            f"not account for km_opt={cfg.km_opt}, including SMS-3DTKE's "
+            "implicit transport and dissipation."
+        )
 
 
 def validate_spp_config(cfg) -> None:
@@ -4964,10 +5137,30 @@ def microphysics_lookup_table_precondition(cfg) -> str | None:
 
     Hail-aware Thompson may generate missing caches under its native
     write controls. That work belongs to preparation asset acquisition.
-    ISHMAEL has no generated fallback.
+    ISHMAEL has no generated fallback.  Neither has RCON: its one
+    initialized table stream is not shipped and no shipped tool builds it.
     """
     mp = int(getattr(cfg, "mp_physics", 0))
-    if mp == 55:
+    if mp == 29:
+        # Asked here so `gpuwm go` and `gpuwm run-plan` refuse before they
+        # fetch or prepare anything, and `gpuwm check` says it, instead of
+        # the forecast stage refusing after preparation.  RCON had no row
+        # while RCON-SPEED-01 refused it at validate_run_config.  Presence
+        # and size only (the loader verifies SHA-256); the sentence is the
+        # table check's own, so there is one wording of this refusal.
+        from gpuwm.core.rcon import TABLE_BYTES, TABLE_FILENAME, table_root
+        stream = table_root() / TABLE_FILENAME
+        try:
+            installed = stream.is_file() and stream.stat().st_size == TABLE_BYTES
+        except OSError:
+            installed = False
+        if not installed:
+            from gpuwm.tables import ensure
+            try:
+                ensure(["rcon"], fetch=False)
+            except (FileNotFoundError, ValueError) as error:
+                return str(error)
+    elif mp == 55:
         from gpuwm.core.ishmael import require_tables
         try:
             require_tables()
@@ -5499,8 +5692,6 @@ def load_config(path: str | Path, *, accept_epssm_auto: bool = False,
         merged["eta_levels"] = tuple(merged["eta_levels"])
     join_chem_name_lists(merged)
     apply_chem_set_defaults(merged)
-    from gpuwm.surface_ocean import apply_ocean_defaults
-    apply_ocean_defaults(merged)
     return validate_run_config(RunConfig(**merged),
                                native_fire_ideal=native_fire_ideal)
 
@@ -6301,6 +6492,10 @@ _DYNAMICS_RANGES: dict[str, tuple] = {
     "relax_timescale_s": (lambda v: v >= 0.0,
                           "a non-negative relaxation time scale in s "
                           "(0 keeps WRF's 10 x dt)"),
+    # The boundary hydrometeor envelope; a negative stretch has no meaning.
+    "lbc_hydrometeor_envelope_km": (lambda v: v >= 0.0,
+                                    "a non-negative stretch of edge in km "
+                                    "(default 25; 0 serves the linear table)"),
     "diff_6th_factor": (lambda v: v >= 0.0,
                         "a non-negative 6th-order diffusion factor "
                         "(WRF Registry default 0.12)"),
@@ -8443,16 +8638,12 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
             "nsas_dx_factor is read only by cu_physics=96 (New SAS); with "
             f"cu_physics={cfg.cu_physics} it would reach nothing and the run "
             "would not be the configuration it names. Leave it at 0.")
-    if cfg.cu_physics == SAS_CU_PHYSICS:
-        if cfg.use_adaptive_time_step:
-            raise ValueError(
-                "cu_physics=94 (SAS) cannot use an adaptive time step: "
-                "CU_SAS closes over DT*STEPCU and holds rates for that fixed "
-                "window; WRF refuses this pair (module_cumulus_driver.F:1131-1135).")
-        if type(cfg.shalconv) is not int or cfg.shalconv not in (0, 1):
-            raise ValueError("shalconv must be 0 or 1: CU_SAS executes the shallow branch only at 1")
-    elif cfg.shalconv != 1:
-        raise ValueError("shalconv is consumed only by cu_physics=94; leave it at 1 otherwise")
+    if cfg.cu_physics == SAS_CU_PHYSICS and cfg.use_adaptive_time_step:
+        raise ValueError(
+            "cu_physics=94 (SAS) cannot use an adaptive time step: "
+            "CU_SAS closes over DT*STEPCU and holds rates for that fixed "
+            "window; WRF refuses this pair (module_cumulus_driver.F:1131-1135).")
+    validate_shalconv_config(cfg)
     if cfg.cu_physics in SAS_PGCON_SCHEMES or cfg.shcu_physics == 4:
         if not math.isfinite(float(cfg.sas_pgcon)):
             raise ValueError(
@@ -8483,13 +8674,7 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
             "formed over dt*stepcu at the call and held while the adaptive "
             "clock moves, so a nonzero cudt would apply them over an "
             "interval the run did not take.")
-    if type(cfg.bmj_rad_feedback) is not bool:
-        raise ValueError("bmj_rad_feedback must be bool")
-    if cfg.bmj_rad_feedback:
-        if cfg.cu_physics not in COLUMN_KERNEL_CU_SCHEMES:
-            raise ValueError("bmj_rad_feedback requires cu_physics=2: other schemes do not publish BMJ cloud fields")
-        if not bmj_feedback_radiation_supported(radiation_scheme_ids(cfg)):
-            raise ValueError("bmj_rad_feedback requires physical cloud radiation or disabled streams: the selected radiation adapter does not merge the carried convective cloud")
+    validate_bmj_rad_feedback_config(cfg)
     if getattr(cfg, "kim_tofd", False) and not float(cfg.tofd_factor) > 0.0:
         raise ConfigurationRefused(
             "tofd_factor must be positive with kim_tofd on: the form-drag "
@@ -8530,27 +8715,7 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
         raise ValueError("scalar_adv_opt must be 0 (ordinary) or 1 (positive definite)")
     if cfg.bl_mynn_tkeadvect and cfg.bl_pbl_physics != 5:
         raise ValueError("bl_mynn_tkeadvect requires the MYNN bl_pbl_physics=5 owner")
-    for name, admitted in MYNN_PBL_OPTION_IDENTITY.items():
-        value = getattr(cfg, name)
-        if name == 'icloud_bl' and cfg.shcu_physics == 5 and value == 0 and type(value) is int:
-            continue
-        if type(value) is not type(admitted) or (value not in MYNN471_OPTION_VALUES[name] if cfg.bl_mynn_version == "wrf_471" else value != admitted):
-            if cfg.bl_mynn_version == "wrf_480" and type(value) is type(admitted) and value in MYNN471_OPTION_VALUES[name]:
-                # Implemented by the 4.8.0 column, but only the default
-                # identity has a native 4.8.0 replay witness so far.
-                raise ConfigurationRefused(
-                    f"{name}={value!r} with bl_mynn_version='wrf_480': the WRF 4.8.0 "
-                    "MYNN column is replay-qualified against native 4.8.0 for the "
-                    "default option identity only; this setting would run "
-                    "unqualified code under the 4.8.0 name. Use wrf_471 for it.")
-            implemented = (
-                f"{name} in {MYNN471_OPTION_VALUES[name]!r}"
-                if cfg.bl_mynn_version == "wrf_471" else f"{name}={admitted!r}")
-            raise ConfigurationRefused(
-                f"{name}={value!r} is outside the admitted MYNN option "
-                f"identity; gpuwm implements {implemented} only, and "
-                "no nearby branch is substituted for an unported one."
-            )
+    validate_mynn_option_identity(cfg)
     if type(cfg.bl_mynn_mixlength) is not int or cfg.bl_mynn_mixlength not in ((0, 1, 2) if cfg.bl_mynn_version == "wrf_471" else (1, 2)):
         raise ConfigurationRefused(
             "bl_mynn_mixlength must be 1 or 2 (or 0, WRF 4.7.1's, which "
@@ -9194,22 +9359,7 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
             "(ra_lw_physics=1 WRF RRTM with ra_sw_physics=1 Dudhia), which "
             "honours icloud=0 end to end, or use icloud=1 or 2 on the 4/4 "
             "pair.")
-    if type(cfg.shcu_physics) is not int or cfg.shcu_physics not in (0, 1, 2, 3, 4, 5):
-        raise ConfigurationRefused("shcu_physics must be 0 (off), 1 (G3 native no-op), 2 (UW), 3 (GRIMS), 4 (NSCV), or 5 (Deng)")
-    from gpuwm.shallow_cumulus import shallow_refusal
-    why = shallow_refusal(cfg.shcu_physics, cfg.bl_pbl_physics,
-                          cfg.bl_mynn_edmf, cfg.cu_physics,
-                          icloud=cfg.icloud, icloud_bl=cfg.icloud_bl)
-    if why:
-        raise ConfigurationRefused(why)
-    if cfg.shcu_physics in (3, 4, 5) and not cfg.moist:
-        raise ConfigurationRefused("shallow convection requires a water-vapour carrier")
-    if cfg.shcu_physics == 5 and not cfg.moist_cq:
-        raise ConfigurationRefused("Deng requires QC and QR condensate carriers")
-    if cfg.shcu_physics == 2 and not (cfg.moist and cfg.moist_cq):
-        raise ConfigurationRefused("UW shallow convection requires moist condensate carriers")
-    if cfg.shcu_physics == 2 and cfg.mp_physics not in (2,4,5,6,8,9,10,11,16,18,24,28,30,50,106,900):
-        raise ConfigurationRefused("WRF UW shallow convection requires the QI carrier (module_shallowcu_driver.F:519-522)")
+    validate_shallow_cumulus_config(cfg)
     if cfg.cu_physics == 7:
         from gpuwm.core.camzm_contract import pbl_arm_refusal
         why = pbl_arm_refusal(cfg.bl_pbl_physics, cfg.sf_sfclay_physics)
@@ -9258,16 +9408,13 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
     if cfg.aercu_opt > 0:
         from gpuwm.core.morrison_aero import refuse_aercu_opt
         refuse_aercu_opt(cfg.aercu_opt, cu_physics=cfg.cu_physics, mp_physics=cfg.mp_physics)
-    # RCON-SPEED-01: retire when a qualified handoff clears this measured gap.
-    if cfg.mp_physics == 29:
-        raise ConfigurationRefused(
-            "mp_physics=29 (RCON) is ported but its release speed proof is open: "
-            "the whole-forecast microphysics stage costs 1.885431x MP28; "
-            "the retained native 1.053748x profile does not explain the GPU excess. "
-            "A qualified speed handoff is required before forecast admission; "
-            "until then select another microphysics scheme, such as mp_physics=28 "
-            "(the Thompson aerosol-aware scheme it is timed against)."
-        )
+    # mp_physics=29 (RCON) is admitted.  RCON-SPEED-01 refused it here in
+    # 3.0.0 and 3.0.1 because its microphysics stage measured 1.885x MP28.
+    # That is a speed defect, not a breakage (strict WRF 4.7.1 replay 0
+    # differing words, a three-hour forecast passes), and plan review never
+    # carried the refusal, so every plan with RCON was called launchable and
+    # then refused here.  The measured cost stays stated in the registry
+    # row; the speed gap stays open with the RCON speed lane.
     if cfg.mp_physics not in MP_PHYSICS_ACCEPTED:
         # Known unported options carry a source-backed reason before the
         # general selector menu. The WDM family is admitted above.
@@ -9680,18 +9827,7 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
             f"m2 s-2 (WRF Registry default 1000.0), got "
             f"{cfg.tke_upper_bound}."
         )
-    if cfg.tke_budget not in (0, 1):
-        raise ConfigurationRefused(
-            f"tke_budget must be 0 (off) or 1 (per-step term-by-term TKE "
-            f"budget accumulation), got {cfg.tke_budget}."
-        )
-    if cfg.tke_budget == 1 and cfg.km_opt != 2 and cfg.bl_pbl_physics != 5:
-        raise ConfigurationRefused(
-            "tke_budget=1 requires km_opt=2 or bl_pbl_physics=5: the implemented budget "
-            "accumulates that closure's explicit source terms. It does "
-            f"not account for km_opt={cfg.km_opt}, including SMS-3DTKE's "
-            "implicit transport and dissipation."
-        )
+    validate_tke_budget_config(cfg)
     if cfg.mix_isotropic not in (0, 1):
         raise ConfigurationRefused(
             f"mix_isotropic must be 0 (anisotropic mixing lengths) or 1 "

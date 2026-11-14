@@ -115,13 +115,41 @@ def read_metem(path) -> MetEmCase:
             for name in ("QC", "QR", "QI", "QS", "QG"):
                 if name in ds.variables:
                     fields[name] = _var(ds, name)[sl]
+        elif np.any(np.ptp(pres[sl].reshape(pres[sl].shape[0], -1), axis=1) > 1.0):
+            # RH on levels that are not isobaric (a model-level source).
+            # Reading it on the flat ladder below would flatten its 3-D
+            # pressure.  real.exe forms qv from RH, TT and the 3-D p_gc
+            # with rh_to_mxrat1 (module_initialize_real.F:1113-1142); that
+            # qv is carried here as specific humidity on the PRES lane.
+            # Transcribed from WRF, not imported from gpuwm.ingest, so the
+            # oracle stays independent of the reader it scores.
+            lane = "relative-humidity-3d-pressure"
+            tt = _var(ds, "TT", np.float64)
+            rh = np.clip(_var(ds, "RH", np.float64), 0.0, 100.0)
+            es = 0.01 * rh * 6.112 * np.exp(17.67 * (tt - 273.15) / (tt - 29.65))
+            qv = np.where(es < pres / 100.0,
+                          np.maximum(0.622 * es / (pres / 100.0 - es), 1.0e-6),
+                          1.0e-6)
+            qv = np.where((pres < 10000.0) & (qv > 1.0e-5), 3.0e-6, qv)
+            specific = (qv / (1.0 + qv)).astype(np.float32)
+            fields["PRES"] = _var(ds, "PRES")[sl]
+            fields["SPFH"] = specific[sl]
+            fields["Q2"] = specific[SURFACE_LEVEL_INDEX]
+            for name in ("QC", "QR", "QI", "QS", "QG"):
+                if name in ds.variables:
+                    fields[name] = _var(ds, name)[sl]
         else:
             lane = "relative-humidity"
             fields["RH"] = _var(ds, "RH")[sl]
             fields["RH2"] = _var(ds, "RH")[SURFACE_LEVEL_INDEX]
         times = ds.variables["Times"][0]
         stamp = b"".join(np.asarray(times).astype("S1").ravel()).decode()
-        valid = datetime.strptime(stamp.strip(), "%Y-%m-%d_%H:%M:%S")
+        # metgrid with nocolons = .true. writes YYYY-MM-DD_HH_MM_SS; real.exe
+        # reads both.  Parsed here, not through the door's reader, so the
+        # oracle stays independent of the code it scores.
+        stamp = stamp.strip()
+        valid = datetime.strptime(
+            stamp, "%Y-%m-%d_%H_%M_%S" if stamp[13:14] == "_" else "%Y-%m-%d_%H:%M:%S")
         return MetEmCase(
             valid_time=valid,
             levels_hpa=(pres[sl, 0, 0] / 100.0).astype(np.float64),
@@ -247,6 +275,9 @@ def run_differential(metem_path, wrfinput_path, *, mp_physics=None,
         snapshot, cfg, coord, case.terrain, landmask=case.landmask,
         source_orography=case.source_orography, p_top=grid["p_top"],
         sfcp_to_sfcp=True, use_sh_qv=False, column_workers=column_workers,
+        # real.exe makes its FLAG_SH surface test only on a FLAG_SH file.
+        flag_sh_surface_fallback=(
+            False if case.lane == "relative-humidity-3d-pressure" else None),
         preprocess_backend=preprocess_backend,
         preprocess_workers=preprocess_workers, state_backend="preprocess")
 

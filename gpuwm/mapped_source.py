@@ -3698,6 +3698,10 @@ def _decode_netcdf(mapping: Mapping[str, object], files: Sequence[Path]) -> _Dec
             int(reference_vertical.size),
             record_pv=(),
         )
+    # The missing policy belongs to the mapping, not to the byte format: a
+    # NetCDF producer that writes soil over water (ERA5 does) declares
+    # landmask_water exactly as a GRIB one does, and gets the same mask.
+    direct = _apply_landmask_water_missing(mapping, direct)
     return _DecodedCollection(
         reference_latitude,
         reference_longitude,

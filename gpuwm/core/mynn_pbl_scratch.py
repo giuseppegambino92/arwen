@@ -750,7 +750,15 @@ def probe_mynn_card(device: int | None = None) -> dict | None:
     compile.  A CPU-only box (where ``gpuwm domain`` prices this scheme)
     takes the ``None`` road and runs the shipped default; only the
     derivation's own ``None`` road answers with the floor.
+
+    ``GPUWM_NO_LOCAL_GPU`` answers ``None`` before CuPy is asked
+    (:mod:`gpuwm.local_gpu`): measured 2026-11-12 on a 16 GB node with the
+    variable set, this probe still opened the card and read 7.27 GB free.
     """
+    from gpuwm.local_gpu import no_local_gpu
+
+    if no_local_gpu():
+        return None
     try:
         import cupy as cp
 

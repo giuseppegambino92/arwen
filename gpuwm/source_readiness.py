@@ -518,6 +518,68 @@ def retention_refusal(window: Window, *, now: datetime | None) -> str | None:
             "not appear by waiting")
 
 
+def layout_refusal(window: Window, *, now: datetime | None) -> str | None:
+    """Why no declared object layout serves ``window``'s cycle, or None.
+
+    :func:`gpuwm.fetch_endpoints.layout_refusal` for the window's source,
+    cycle and pinned host, so readiness and the fetch refuse one cycle in
+    the same words.
+    """
+
+    return fetch_endpoints.layout_refusal(
+        window.source, window.cycle, now=now, pinned=window.transport)
+
+
+def archive_hole_refusal(window: Window, answered, *,
+                         now: datetime) -> str | None:
+    """Why an archive's missing object will not appear by waiting, or None.
+
+    ``answered`` is each probed ``(Need, answer)``.  A need answered
+    ``not_posted`` (every host asked answered, and one said the object is
+    not there) is refused when its late time has passed and no host on
+    its source's ladder that keeps a bounded live window still keeps a
+    cycle this old: only archives serve it, and an archive does not fill
+    a hole by waiting.  A host that could not be heard (``not_heard``)
+    never refuses.
+
+    THE BREAKAGE THIS PREVENTS (door item 11, 2026-11-12): an archive
+    cycle with a missing object answered ``waiting`` (exit 75, retry in
+    30 s) years after its late time, so a launcher waited on an object
+    no host will ever post.
+    """
+
+    age = fetch_endpoints.cycle_age_hours(window.cycle, now)
+    for need, answer in answered:
+        if answer.get("answer") != NOT_POSTED:
+            continue
+        if need.late_at is None or now < need.late_at:
+            continue
+        rungs = fetch_endpoints.ladder(need.source)
+        if not rungs:
+            continue
+        live = [rung for rung in rungs if not rung.archive]
+        if live:
+            # A bounded live host still keeps this cycle: it may yet post.
+            if any(rung.covers(age) for rung in live):
+                continue
+        elif rows.posting(need.source).shape != "archive":
+            # Every host keeps cycles forever, but the route posts live
+            # (gfs-pressure, the mapped GFS route): a fresh cycle past its
+            # late time is late, not a hole (item 11 review: it was refused).
+            continue
+        lead = window.start_lead if need.lead is None else need.lead
+        decided = answer.get("url")
+        return (f"{need.source.upper()} cycle {window.cycle:%Y-%m-%dT%H}Z "
+                f"lead {lead} ({need.role}) is not on any host that keeps a "
+                f"cycle this old"
+                + (f" ({decided} answered that it is not there)" if decided else "")
+                + f", and its late time {rows.instant(need.late_at)} has "
+                "passed; only archives keep a cycle this old and an archive "
+                "does not fill a hole by waiting, so this window will not "
+                "start from them")
+    return None
+
+
 def archive_end_refusal(window: Window, *, now: datetime) -> str | None:
     """Why an archive window runs past the archive's declared end, or None."""
 
@@ -611,8 +673,9 @@ def readiness(source: str, cycle: datetime | str, hours: int, *,
         return (_refusal_document(source, named, basis, hours, as_posted,
                                   str(error), checked), REFUSED_EXIT)
     posting = rows.posting(source, provider)
-    refusal = retention_refusal(window, now=checked) or archive_end_refusal(
-        window, now=checked)
+    refusal = (retention_refusal(window, now=checked)
+               or layout_refusal(window, now=checked)
+               or archive_end_refusal(window, now=checked))
     lead_rows = []
     try:
         lead_rows = rows.lead_rows(
@@ -686,12 +749,14 @@ def readiness(source: str, cycle: datetime | str, hours: int, *,
                         start_needs=need_rows)
         return document, READY_EXIT
     answers: dict[int | None, str] = {}
+    answered = []
     waiting = False
     for need in needs:
         if no_probe:
             answer = {"answer": None, "endpoint": None}
         else:
             answer = need_answer(window, need, probe=probe, now=checked)
+            answered.append((need, answer))
         need_rows.append({**need.row(), "answer": answer["answer"],
                           "endpoint": answer["endpoint"]})
         if need.source == source:
@@ -710,6 +775,10 @@ def readiness(source: str, cycle: datetime | str, hours: int, *,
     if ready:
         document.update(state="ready", ready=True)
         return document, READY_EXIT
+    hole = archive_hole_refusal(window, answered, now=checked)
+    if hole is not None:
+        document.update(state="refused", refusal=hole)
+        return document, REFUSED_EXIT
     retry = poll
     if (ready_at is not None and ready_at - ASK_AHEAD > checked
             and (no_probe or not any(fetch_endpoints.policy_uses_aws(need.source)

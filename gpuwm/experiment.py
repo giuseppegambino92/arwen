@@ -4510,8 +4510,6 @@ def build_experiment(raw: dict, source: str) -> ExperimentConfig:
         # The full legacy invariant battery applies to every per-domain
         # RunConfig (p5t1 review F1): same checks, same messages as
         # load_config.
-        from gpuwm.surface_ocean import apply_ocean_defaults
-        apply_ocean_defaults(kw)
         run = validate_run_config(RunConfig(**kw))
         bounds = {}
         for bound_key in ("starting_time_step", "max_time_step", "min_time_step"):

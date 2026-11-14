@@ -134,7 +134,12 @@ ROUTE_TABLE_SHA256 = (
     # is supported.
     # Moved by feat/hrdps-source: the gem-hrdps and gem-rdps rows (ECCC MSC
     # Datamart, one object per variable and level).
-    "eb9238bbe478221f5f781c245ff30e23d81c66275b624db187777794072afb33"
+    # Moved by fix/2913-dwd-fetch-stall: opendata.dwd.de has a host_policy
+    # transfer row (a slow connection is asked again on a fresh one, and
+    # more files move at once while each one is slow).
+    # Moved by fix/2913-ecmwf-google-archive: Google's ECMWF open-data mirror
+    # is an archive on every ECMWF route (its 72 h retention was wrong).
+    "adc3e1167047514f2ca7acc2b39fbd57432cb5ebb0a53bba8938401be9ef6c97"
 )
 
 #: Sources whose acquisition predates the route table and keeps its own
@@ -2967,7 +2972,10 @@ def run_plan(plan: FetchPlan, *, out: Path, force: bool = False,
 
     try:
         entries, receipt = fetch_pool.run_transfers(
-            jobs, workers=workers, on_admitted=_admitted, monitor=monitor)
+            jobs, workers=workers, on_admitted=_admitted, monitor=monitor,
+            # A host's table row may widen a default pool while it serves
+            # slowly; an asked-for --fetch-workers is kept exactly.
+            widen=file_workers is None)
     finally:
         monitor.close()
         counter.close()

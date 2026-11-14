@@ -718,9 +718,16 @@ pub(super) fn scale_for_filled_selector_in(
         (_, CanonicalField::WindSpeed, VerticalSelector::HeightAboveGroundMeters(10),
          ColorScale::Discrete(discrete)) => ColorScale::Discrete(
             crate::plot_design::fit_surface_wind_scale(discrete, values)),
-        (RenderStyle::WeatherTemperature, CanonicalField::Temperature, VerticalSelector::IsobaricHpa(_),
-         ColorScale::Discrete(discrete)) => ColorScale::Discrete(
-            crate::plot_design::fit_isobaric_temperature_scale(discrete, values)),
+        // A temperature fill's fixed ladder is fitted to its field by the
+        // fitted-scale table (data/fitted-scales.json): isobaric levels move
+        // onto a field outside the ladder; 2 m temperature on a small grid
+        // that spans only a band or two gets a finer ladder cut for it.
+        (RenderStyle::WeatherTemperature, _, _, ColorScale::Discrete(discrete)) => {
+            match crate::plot_design::fitted_scale_row(filled_selector) {
+                Some(row) => ColorScale::Discrete(crate::plot_design::fit_scale_to_field(discrete, values, row)),
+                None => ColorScale::Discrete(discrete),
+            }
+        }
         (_, _, _, scale) => scale,
     }
 }

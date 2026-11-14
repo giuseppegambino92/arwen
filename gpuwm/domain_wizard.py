@@ -2850,6 +2850,13 @@ def _builtin_scalar(value):
     return None
 
 
+def _prepares_on_gfs_route(source) -> bool:
+    """The question `gpuwm go --lake-ice` asks (gpuwm.runplan)."""
+
+    from gpuwm.runplan import prepares_on_gfs_route
+    return prepares_on_gfs_route(source)
+
+
 def _render_table(name: str, entries: dict, array_of_tables: bool = False,
                   comment: str | None = None) -> str:
     header = f"[[{name}]]" if array_of_tables else f"[{name}]"
@@ -4244,6 +4251,17 @@ def render_config(*, name: str, start_time: datetime, hours: int,
             "fetch", fetch_hints,
             comment="Advisory data-acquisition hints (validated, not "
                     "executed); keys mirror `gpuwm fetch` flags."))
+        if _prepares_on_gfs_route(fetch_hints.get("source")):
+            # The GFS route's lake-ice choice, written where a user reads
+            # it: this file has no [case_data], the only table that carried
+            # the switch before (door item 7).
+            parts.append(_render_table(
+                "ingest", {"gfs_lake_ice": "observed"},
+                comment="Lake ice: \"observed\" freezes the lakes the IMS "
+                        "daily analysis (NSIDC) sees frozen, fetched at "
+                        "preparation only when a domain has lake cells; "
+                        "\"wps\" keeps the forcing's ice and fetches "
+                        "nothing (or gpuwm go --lake-ice wps)."))
     else:
         # NO [fetch] TABLE, DELIBERATELY.  The table is validated at every
         # config load against the sources `gpuwm fetch` can actually

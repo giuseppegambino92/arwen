@@ -4222,21 +4222,35 @@ def _translate_namelists_read(wps: dict, inp: dict, *, wps_path: Path,
                 "derivation).")
         declared_parent_ids.add(grid_id)
 
+    # The WPS user guide defines &geogrid parent_id "for each nest" and
+    # asks for 1 on the coarsest domain; namelist generators write WRF's
+    # own head-grid spelling 0 there.  Both name the same head grid, so
+    # both are taken and 0 is booked as normalized to WPS's 1.  Any other
+    # value names an external parent the head grid cannot have (a shifted
+    # or misordered column), and is refused.
+    if geo_parent_id[0] not in (0, 1):
+        raise ValueError(
+            "WPS d01 parent_id must be 1 (WPS's spelling) or 0 (WRF's "
+            f"head-grid spelling), got {geo_parent_id[0]}: the head grid "
+            "cannot have an external parent.")
+    if geo_parent_id[0] == 0:
+        drop("geogrid", "parent_id (root)", [0],
+             "WPS's coarsest domain has no parent; WRF's head-grid "
+             "spelling 0 is normalized to WPS's 1")
+        geo_parent_id[0] = 1
     wps_root = {
-        "parent_id": geo_parent_id[0],
         "parent_grid_ratio": geo_ratio[0],
         "i_parent_start": geo_i[0],
         "j_parent_start": geo_j[0],
     }
     expected_wps_root = {
-        "parent_id": 1,
         "parent_grid_ratio": 1,
         "i_parent_start": 1,
         "j_parent_start": 1,
     }
     if wps_root != expected_wps_root:
         raise ValueError(
-            "WPS d01 root topology must use parent_id=1, "
+            "WPS d01 root topology must use "
             "parent_grid_ratio=1, i_parent_start=1, j_parent_start=1; "
             f"got {wps_root}.")
 

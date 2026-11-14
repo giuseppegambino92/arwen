@@ -323,7 +323,7 @@ So, plainly, and in the order the two routes actually work:
   and the composition they name was reachable before they were added.
 
 The composition space is measured rather than argued.
-`tools/report_physics_composition_walk.py` makes 524371 physics admission
+`tools/report_physics_composition_walk.py` makes 582653 physics admission
 attempts with real experiment TOMLs, pushes every one through
 `gpuwm.experiment.build_experiment` -- the single front door every
 runner reaches a per-domain `RunConfig` through -- and records the
@@ -331,20 +331,24 @@ verdict. `docs/public/receipts/physics-composition-walk.json` is that
 record, and `tests/test_physics_composition_walk.py` regenerates it on
 every release cut and compares it byte for byte. As measured:
 
-- **71078 of 582653 admission attempts are accepted**, covering **71068 distinct
+- **71183 of 582653 admission attempts are accepted**, covering **71173 distinct
   accepted suites**, against 49 registered templates. The presets are a
   corner of the space, not the space.
 - **Every accepted run keeps every switch the file set**, checked
   against the resolved per-domain `RunConfig`. Zero rewrites. An
   admission is never a silent substitution.
 - **Every admitted value of every axis reaches an accepted run**, with
-  one named hold: `mp_physics = 29` (RCON) is ported and admitted by the
-  schema but refused at the forecast door until its speed proof clears
-  (its whole-forecast microphysics stage measures 1.885x MP28).
+  no hold. `mp_physics = 29` (RCON) was held at the run door for its
+  speed in 3.0.0 and 3.0.1; from 3.0.2 it runs as an explicit option.
+  Its whole-forecast microphysics stage still measures 1.885x MP28,
+  which is an open speed defect and the reason it is never a default.
+  It runs only where its initialized table stream is installed, a
+  file gpuwm neither ships nor builds: without it the run refuses by
+  name before any step, and plan review names the same file.
   `ra_lw_physics = 1` (WRF RRTM longwave) was the last unported one;
   1.9 ports it, and it now reaches 7719 distinct accepted suites,
   including 860 paired with Dudhia shortwave.
-- **511575 refusals fall into 48 distinct rules**, every one of which
+- **511470 refusals fall into 47 distinct rules**, every one of which
   names the selector to change, and each of which has a
   demonstrated remedy -- the receipt carries a before/after pair per
   rule showing that doing what the message says reaches an accepted
@@ -1888,12 +1892,12 @@ why these pairings are refused:
 ```
 
 The MYNN *PBL* carries no such restriction: 5/91, 5/1 and 5/5 are all
-accepted -- **1422, 1422 and 1890 distinct accepted combinations**
+accepted -- **1422, 1422 and 1905 distinct accepted combinations**
 respectively, counted from the walk receipt's `accepted_combinations`.
 Which field is counted matters, so it is said rather than left to be
-inferred: `mynn_slice.accepted` in the same receipt reads **1891** for
+inferred: `mynn_slice.accepted` in the same receipt reads **1906** for
 the 5/5 pairing because that field counts ATTEMPTS, and the walk
-re-tries its 5/5 anchor suite in a second tier -- 1891 attempts over 1890
+re-tries its 5/5 anchor suite in a second tier -- 1906 attempts over 1905
 distinct configurations. Distinct configurations are what a reader
 asking "what may I compose?" wants, so that is what the three numbers
 above are. Earlier revisions of this page described the 5/5 pairing as
@@ -1941,7 +1945,7 @@ calls (`tests/test_sfclayrev_nonfinite.py`,
 All five run. In plain words: `template` means **a preset exists**, and
 `component-override` means **a preset exists** on the routes that
 declare it and you **type it in your config** anywhere else -- which is
-how the revised MM5 row's 20337 distinct accepted combinations were measured.
+how the revised MM5 row's 20382 distinct accepted combinations were measured.
 Maturity and reachability are separate registry axes, quoted verbatim
 from the registry: `maturity` is the option's evidence tier and
 `reachability.state` is how a NAMED route can offer it. Neither column

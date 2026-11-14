@@ -90,17 +90,51 @@ _OPTIONAL_3D_STATIC = (
 #: isobaric spacing (2500 Pa).
 ISOBARIC_TOLERANCE_PA = 1.0
 
+#: The lane of a met_em that carries RH and no SPECHUMD on levels that are
+#: not isobaric (a model-level source: Arwen Global tapes, ECMWF model
+#: levels, any hybrid ungrib table without SPECHUMD).  real.exe takes such
+#: a file (rh_to_mxrat1 on the 3-D ``p_gc``, module_initialize_real.F:1113-
+#: 1142); the RH lane cannot, because it replaces the 3-D pressure with a
+#: flat ladder.  The reader forms the specific humidity real.exe's
+#: conversion implies (:func:`gpuwm.ingest.real.relative_humidity_to_specific_humidity`)
+#: and hands it to the FLAG_SH lane, which reads ``PRES`` per column.
+RH_DERIVED_LANE = "specific_humidity_from_rh"
+
 #: ``PRES(0) == PSFC`` is how the surface pseudo-level is proven.  The
 #: two are the same float32 bytes in both staged files (max |difference|
 #: measured 0.0 Pa), so this tolerance only absorbs a producer that
 #: rounded one of them.
 SURFACE_LEVEL_TOLERANCE_PA = 1.0
 
+#: One WPS date, in both spellings metgrid writes: YYYY-MM-DD_HH:MM:SS,
+#: and YYYY-MM-DD_HH_MM_SS when namelist.wps sets nocolons = .true.
+#: metgrid applies that spelling to the file name AND to the Times
+#: record inside it, and real.exe reads either, so the name rule and the
+#: Times rule are this one pattern.
+_WPS_DATE = (r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_"
+             r"(?P<hour>\d{2})[:_](?P<minute>\d{2})[:_](?P<second>\d{2})")
 _NAME_RE = re.compile(
-    r"^met_em\.(?P<domain>d\d{2})\."
-    r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_"
-    r"(?P<hour>\d{2})[:_](?P<minute>\d{2})[:_](?P<second>\d{2})"
-    r"(?:\.nc)?$")
+    r"^met_em\.(?P<domain>d\d{2})\." + _WPS_DATE + r"(?:\.nc)?$")
+_TIMES_RE = re.compile(r"^" + _WPS_DATE + r"$")
+
+
+def _wps_instant(parts) -> datetime:
+    return datetime(
+        int(parts["year"]), int(parts["month"]), int(parts["day"]),
+        int(parts["hour"]), int(parts["minute"]), int(parts["second"]))
+
+
+def parse_met_em_times(record: str) -> datetime:
+    """A met_em ``Times`` record, colon or nocolons spelling.
+
+    Raises ``ValueError`` for anything else (a ``T`` separator, a space,
+    dashes in the clock, an impossible date).
+    """
+
+    matched = _TIMES_RE.match(record)
+    if matched is None:
+        raise ValueError(f"{record!r} is not YYYY-MM-DD_HH:MM:SS or YYYY-MM-DD_HH_MM_SS")
+    return _wps_instant(matched.groupdict())
 
 
 def parse_met_em_name(path: Path | str) -> tuple[str, datetime]:
@@ -115,9 +149,7 @@ def parse_met_em_name(path: Path | str) -> tuple[str, datetime]:
             "underscores instead of colons).")
     parts = matched.groupdict()
     try:
-        instant = datetime(
-        int(parts["year"]), int(parts["month"]), int(parts["day"]),
-            int(parts["hour"]), int(parts["minute"]), int(parts["second"]))
+        instant = _wps_instant(parts)
     except ValueError as error:
         raise MetgridRefusal(f"{name}: invalid filename time: {error}") from None
     return parts["domain"], instant
@@ -276,8 +308,11 @@ class MetgridCase:
     landuse: Mapping[str, object]
     statics: Mapping[str, np.ndarray]
     soil: Mapping[str, object]
-    #: ``"rh"`` (pressure-level RH, WRF's FLAG_QV-absent lane) or
-    #: ``"specific_humidity"`` (metgrid SPECHUMD present -- WRF FLAG_SH).
+    #: ``"rh"`` (pressure-level RH, WRF's FLAG_QV-absent lane),
+    #: ``"specific_humidity"`` (metgrid SPECHUMD present -- WRF FLAG_SH), or
+    #: ``RH_DERIVED_LANE`` (RH on levels that are not isobaric, such as
+    #: model levels: the specific humidity real.exe's rh_to_mxrat1 forms
+    #: from RH, TT and the 3-D PRES, carried on the FLAG_SH lane).
     lane: str
     #: Which metgrid level was proven to be the surface pseudo-level, or
     #: ``None`` when the file carries no surface anchor.
@@ -342,9 +377,11 @@ def _read_met_em_dataset(path, domain, valid_time, dataset):
         raise MetgridRefusal(f"{path.name}: Times must have shape (1, 19) on Time/DateStrLen")
     try:
         record = b"".join(bytes(item) for item in np.asarray(times[...]).reshape(-1)).decode("ascii")
-        record_time = datetime.strptime(record, "%Y-%m-%d_%H:%M:%S")
+        record_time = parse_met_em_times(record)
     except (ValueError, UnicodeError, TypeError):
-        raise MetgridRefusal(f"{path.name}: invalid ASCII Times record") from None
+        raise MetgridRefusal(
+            f"{path.name}: invalid ASCII Times record; metgrid writes "
+            "YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH_MM_SS with nocolons") from None
     if record_time != valid_time:
         raise MetgridRefusal(f"{path.name}: Times {record} disagrees with the filename; restore the correctly dated file")
 
@@ -471,9 +508,40 @@ def _read_met_em_dataset(path, domain, valid_time, dataset):
             "orography either way.")
 
     # ---- which moisture lane this file can drive ---------------------
+    retained = stacks["PRES"][keep]
+    spread = retained.reshape(retained.shape[0], -1)
+    level_spread = np.ascontiguousarray(spread.max(axis=1) - spread.min(axis=1))
+    levels_pa = np.ascontiguousarray(spread.mean(axis=1, dtype=np.float64))
     lane = "rh"
     if specific:
         lane = "specific_humidity"
+    elif np.any(level_spread > ISOBARIC_TOLERANCE_PA):
+        # RH on levels that are not isobaric.  The RH lane would flatten
+        # them onto levels_hpa, so the file goes the way real.exe takes
+        # it: qv from RH on the 3-D pressure, here as the specific
+        # humidity the FLAG_SH lane converts back, on that lane's PRES.
+        from gpuwm.ingest.real import relative_humidity_to_specific_humidity
+        lane = RH_DERIVED_LANE
+        k = int(np.flatnonzero(level_spread > ISOBARIC_TOLERANCE_PA)[0])
+        with np.errstate(over="ignore", invalid="ignore"):
+            derived = relative_humidity_to_specific_humidity(
+                stacks["TT"], stacks["PRES"], stacks["RH"])
+        if not np.isfinite(derived).all():
+            raise MetgridRefusal(
+                f"{path.name}: specific humidity derived from RH, TT and "
+                "PRES is non-finite; TT or PRES holds a value no "
+                "saturation relation can use")
+        stacks["SPECHUMD"] = np.ascontiguousarray(derived, dtype=np.float32)
+        del stacks["RH"], fields["RH"], fields["RH2"]
+        for key in [key for key, value in field_map.items()
+                    if value in ("RH", "RH2")]:
+            del field_map[key]
+        notes.append(
+            f"RH on levels that are not isobaric (level {k + surface_level + 1} "
+            f"of PRES spans {float(level_spread[k]):.4g} Pa): specific "
+            "humidity formed from RH, TT and PRES by WRF's rh_to_mxrat1 "
+            "relation and carried on the specific-humidity lane")
+    if lane != "rh":
         for met_name, arwen, surface in _SPECIFIC_STACKS:
             stack = stacks.get(met_name)
             if stack is None:
@@ -481,11 +549,14 @@ def _read_met_em_dataset(path, domain, valid_time, dataset):
                     dataset, met_name, want=mass3,
                     why=("the specific-humidity lane interpolates "
                          f"{met_name} columns"))
+            source = met_name
+            if lane == RH_DERIVED_LANE and met_name == "SPECHUMD":
+                source = "rh_to_mxrat1(RH, TT, PRES)"
             fields[arwen] = np.ascontiguousarray(stack[keep])
-            field_map[f"{met_name}[{surface_level + 1}:]"] = arwen
+            field_map[f"{source}[{surface_level + 1}:]"] = arwen
             if surface is not None:
                 fields[surface] = np.ascontiguousarray(stack[surface_level])
-                field_map[f"{met_name}[{surface_level}]"] = surface
+                field_map[f"{source}[{surface_level}]"] = surface
     for name in (*_HYDROMETEOR_STACKS, *METGRID_NUMBER_FIELDS):
         flag = _field_flag(dataset, name)
         if flag == 1 and name not in dataset.variables:
@@ -502,25 +573,7 @@ def _read_met_em_dataset(path, domain, valid_time, dataset):
         elif name in dataset.variables:
             notes.append(f"{name} is not flagged as analyzed input; retained WRF absent-field initialization")
 
-    # ---- the isobaric ladder -----------------------------------------
-    retained = stacks["PRES"][keep]
-    spread = retained.reshape(retained.shape[0], -1)
-    level_spread = np.ascontiguousarray(spread.max(axis=1) - spread.min(axis=1))
-    levels_pa = np.ascontiguousarray(spread.mean(axis=1, dtype=np.float64))
-    if lane == "rh":
-        bad = np.flatnonzero(level_spread > ISOBARIC_TOLERANCE_PA)
-        if bad.size:
-            k = int(bad[0])
-            raise MetgridRefusal(
-                f"met_em level {k + surface_level + 1} of PRES spans "
-                f"{float(level_spread[k]):.4g} Pa across the domain, so "
-                "it is not an isobaric level.  ArWen's pressure-level "
-                "lane REPLACES the file's 3-D pressure with a flat "
-                "ladder broadcast from levels_hpa "
-                "(gpuwm/ingest/real.py:2694), which would silently "
-                "flatten this level.  A non-isobaric source needs the "
-                "specific-humidity lane, which metgrid writes only when "
-                "the ungrib table supplies SPECHUMD.")
+    # ---- the level ladder (levels_pa, level_spread: above) ------------
     order = np.argsort(-levels_pa)
     if not np.array_equal(order, np.arange(levels_pa.size)) and not \
             np.array_equal(order, np.arange(levels_pa.size)[::-1]):
@@ -794,6 +847,8 @@ def check_met_em_series(cases: Sequence[MetgridCase], *, interval_seconds: float
                 raise MetgridRefusal(f"{item.path.name}: static coordinate field {name} changed within the series")
         if item.snapshot.levels_hpa.shape != first.snapshot.levels_hpa.shape:
             raise MetgridRefusal(f"{item.path.name}: vertical forcing level count changed")
+        # Only the RH lane flattens PRES onto levels_hpa; RH_DERIVED_LANE,
+        # like the specific-humidity lane, reads PRES per column.
         if first.lane == "rh" and not np.allclose(item.snapshot.levels_hpa, first.snapshot.levels_hpa, rtol=0.0, atol=0.01):
             raise MetgridRefusal(f"{item.path.name}: isobaric forcing levels changed within the series")
         # Specific-humidity PRES is a physical, time-varying 3-D coordinate;

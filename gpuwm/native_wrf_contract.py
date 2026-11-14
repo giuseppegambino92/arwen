@@ -688,7 +688,14 @@ def validate_wps_geometry(exp, wps_namelist: Path, *, source_name: str):
         raise ValueError(f"WPS/experiment domain identity mismatch: WPS {wps_ids}, experiment {expected_ids}")
     slots = {grid_id: slot for slot, grid_id in enumerate(expected_ids, start=1)}
     expected_parents = [slots[domain.parent_id or 1] for domain in exp.domains]
-    observed_parents = wps_values.get("parent_id", [1])[:len(exp.domains)]
+    observed_parents = list(wps_values.get("parent_id", [1])[:len(exp.domains)])
+    # 3.0.2 item 2: the head grid has no parent; WPS asks for 1 there and
+    # namelist generators write WRF's head-grid spelling 0.  import-namelist
+    # and the support report take both and book the 0 as normalized to 1, so
+    # the same file is read the same way here.  Any other d01 value is still
+    # compared, and refused as a parent the head grid cannot have.
+    if observed_parents[:1] == [0]:
+        observed_parents[0] = 1
     if observed_parents != expected_parents:
         raise ValueError(f"WPS/experiment parent-slot identity mismatch: WPS {observed_parents}, experiment {expected_parents}")
 

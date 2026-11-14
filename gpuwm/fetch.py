@@ -1890,6 +1890,9 @@ def cycle_publication_check(source: str, cycle: datetime, last_hour: int, *,
     if not cycle_is_probeable(source):
         return PublicationCheck("unprobeable")  # A keyed job API has no public object to HEAD.
     options = dict(cadence=cadence, start_hour=start_hour, member=member, source_parameters=source_parameters)
+    gap = fetch_endpoints.layout_refusal(source, cycle, now=now, pinned=transport)
+    if gap is not None:
+        return PublicationCheck("not-published", gap)
     ladder = fetch_endpoints.serving_ladder(source, cycle=cycle, now=now, pinned=transport)
     unheard: list[str] = []
     for endpoint in ladder:
@@ -2436,6 +2439,11 @@ def _posting_loop(source: str, cycle: datetime, args, *, leads,
         member=(plan.member if plan is not None
                 else getattr(args, "member", None)),
         transport=transport, plan=plan, hours=int(args.hours))
+    # A cycle no declared layout serves is refused before any wait
+    # (fetch_endpoints.layout_refusal names the breakage: door item 11).
+    gap = readiness.layout_refusal(window, now=None)
+    if gap is not None:
+        raise ValueError(gap)
     return fetch_as_posted.PostingLoop(
         window, args.out,
         late_after_minutes=getattr(args, "late_after_minutes", None),
@@ -4475,6 +4483,11 @@ def _fetch_gfs_fullfile_locked(*, cycle: datetime, hours: tuple[int, ...],
         beyond = [hour for hour in hours if hour > GDAS_MAX_FORECAST_HOUR]
         if beyond:
             raise ValueError(gdas_capability_refusal(beyond[0]))
+    # A cycle no declared layout serves is refused by name before any
+    # host is asked (fetch_endpoints.layout_refusal: door item 11).
+    gap = fetch_endpoints.layout_refusal(source, cycle, pinned=pinned_host)
+    if gap is not None:
+        raise ValueError(gap)
     if top_pressure_pa is not None and all_levels:
         raise ValueError(
             "--p-top-pa names the model top the ladder must reach and "
@@ -8882,7 +8895,8 @@ def _window_posted(window, check) -> bool:
     try:
         check(unheard.append)
     except RuntimeError:
-        if readiness.retention_refusal(window, now=None) is not None:
+        if (readiness.retention_refusal(window, now=None) is not None
+                or readiness.layout_refusal(window, now=None) is not None):
             raise
         return False
     if unheard:

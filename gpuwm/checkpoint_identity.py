@@ -62,6 +62,10 @@ CAMPAIGN_IMPLICIT_RUN_KEYS = {
     # earlier checkpoint and public document ran, so it is absent there;
     # option 2 (published-description C_bd(T_air, p_sfc)) binds by name.
     "opt_snow_compact": 1,
+    # The lateral-boundary hydrometeor envelope (fix/door-10): 25 km is the
+    # constant every earlier run served with, so it is absent there; any
+    # other value (0 serves the linear table) binds.
+    "lbc_hydrometeor_envelope_km": 25.0,
     "cu_rad_feedback": False,
     "rrtmg_aer3_source": "operational_fork",
     # Disabled moving frames preserve all earlier document/restart identities.

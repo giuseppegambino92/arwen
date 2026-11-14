@@ -179,7 +179,7 @@ _FREEZE_COLUMN = ("ice_ocean_mask", "xice", "ice_volume", "ice_skin",
 def _freeze_pwp(fields, new_ice_thickness, water_capacity, dt):
     """Apply the ice step's ocean heat to the 3D PWP mixed layer and freeze it.
 
-    The 3D PWP owner (sf_ocean_physics=2, the multi-day default) carries no
+    The 3D PWP owner (sf_ocean_physics=2; the multi-day default through 3.0.1) carries no
     OML ``tml``/``hml`` slab: its mixed layer is the level-major ``om_tmp``
     profile over the layer bottoms ``om_depth`` down to ``om_ml``. Reading the
     OML slab here was KeyError 'tml' at the first surface step of every run of
