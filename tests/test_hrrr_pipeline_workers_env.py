@@ -1,6 +1,7 @@
 """GPUWM_PIPELINE_WORKERS overrides the HRRR decoder worker count without
 breaking the preparation's receipt check.
 
+Breakage it prevents (a rented 8-card box, 2026-10-27): the override rewrote the
 receipt's "requested" to the environment value, so
 prepare_hrrr_wrf._validated_worker_receipts (which compares "requested" with
 the count it passed) refused every preparation after ~10 min with

@@ -80,7 +80,6 @@ SITE_FILES = (
     # the native member RUC unit. Audit its actual source/options recording.
     "gpuwm/ensemble/batch_ruc.py",
     "gpuwm/ensemble/surface_recipe.py",
-    "gpuwm/da/letkf_device.py",
     # The land no-FTZ route (WRF 4.7 Noah-MP night snow-aging port): the one
     # Noah-MP compile site moved from a RawModule in noahmp_kernel_sources.py
     # to direct NVRTC here, recording source, options and image.
@@ -186,34 +185,17 @@ RAWMODULE_CONSTRUCTORS_OUTSIDE_THE_MANIFEST = {
         "by tests/test_storm_tracking_isobaric_gpu.py; it runs between steps "
         "to steer a nest, computes no forecast field and is not a "
         "translation unit the manifest freezes"),
-    "gpuwm/da/fixed_order_gemm.py": (
-        "the LETKF analysis's fixed-order batched products, one RawKernel per "
-        "float dtype compiled on first use; they run in the data-assimilation "
-        "analysis, not a forecast step, record nothing and are not a "
-        "translation unit the manifest freezes"),
     "gpuwm/da/radar_tten.py": (
         "the research data-assimilation line's radar latent heating, one "
         "RawKernel per entry point compiled on first use: the builder runs "
         "between legs, and its one model-side kernel runs only while a "
         "forcing is attached by the cycle driver's opt-in flag; it records "
         "nothing and is graded against NOAA's compiled Fortran instead"),
-    "gpuwm/da/hydrometeor_analysis.py": (
-        "the radar precipitation analysis of the research DA line (NOAA's "
-        "Thompson retrieval and GSD precipitation block, glibc_flt64.cuh "
-        "prepended), one RawModule compiled on first use; it runs in the "
-        "data-assimilation analysis, not a forecast step, records nothing and "
-        "is graded bit for bit against NOAA's own Fortran by "
-        "tools/gsd_precip_oracle"),
     "gpuwm/core/tempo_runtime.py": (
         "the TEMPO unit's own compile site (mp_physics = 900, "
         "--fmad=false), its headers composed into the one compiled string; "
         "it records through record_module in the same function under its "
         "own key, as the BEP+BEM composed unit above does"),
-    "gpuwm/da/letkf_device.py": (
-        "the LETKF analysis's member-count kernels, one RawModule per "
-        "ensemble size and card compiled on first use; they run in the "
-        "data-assimilation analysis, not a forecast step, record nothing "
-        "and are not a translation unit the manifest freezes"),
     "gpuwm/core/noah_mosaic.py": (
         "the Noah mosaic tile loop's two compile sites (with and without the "
         "urban canopy, --fmad=false); each records through record_module in "
@@ -720,41 +702,3 @@ def test_gpu_a_compiled_module_records_the_source_the_test_rebuilds():
     assert entry["options"] == expected_options
     assert entry["compiled_image"]["status"] in {"resolved", "unavailable"}
     reset_kernel_manifest()
-
-
-def test_letkf_device_records_its_original_compiler_inputs(monkeypatch):
-    import importlib
-    import sys
-    import types
-    from gpuwm.da import letkf_device
-    # The package exports a function named kernel_manifest. Import the
-    # submodule explicitly so this seam patches the compiler's recorder.
-    manifest = importlib.import_module("gpuwm.certify.kernel_manifest")
-    events = []
-    class Device:
-        def __init__(self, device):
-            self.device = device
-        def __enter__(self):
-            events.append(("device", self.device))
-        def __exit__(self, *args):
-            return False
-    class Module:
-        def __init__(self, *, code, options):
-            self.code, self.options = code, options
-            events.append(("construct", code, options))
-        def compile(self):
-            events.append(("compile",))
-    records = []
-    monkeypatch.setitem(sys.modules, "cupy", types.SimpleNamespace(
-        cuda=types.SimpleNamespace(Device=Device), RawModule=Module))
-    monkeypatch.setattr(manifest, "record_module", lambda key, **args: records.append((key, args)))
-    letkf_device._module.cache_clear()
-    try:
-        module = letkf_device._module(7, 2)
-        assert events == [("device", 2), ("construct", module.code, module.options), ("compile",)]
-        assert module.code == letkf_device._SOURCE.replace("RR", "7")
-        assert module.options == ("--fmad=false", "-std=c++14")
-        assert records == [("letkf_device_members_7", {
-            "source": module.code, "options": module.options, "module": module})]
-    finally:
-        letkf_device._module.cache_clear()

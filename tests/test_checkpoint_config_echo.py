@@ -102,7 +102,15 @@ MOVED = {
                                      {"bl_mynn_gsd41_unsquared_qtke"}),
     "mynn_sfclay_variant": (dict(mynn_sfclay_variant="gsl_wrf39"),
                             {"mynn_sfclay_variant"}),
-    "mynn_fixes_v61": (dict(mynn_fixes_v61=True), {"mynn_fixes_v61"}),
+    # MY1 (3.0.3): on by default, echoed only where the wrf_461 MYNN PBL
+    # reads it, so moving it means running that PBL.  ML1 (the BouLac length
+    # sign) is read by the same PBL and is echoed with it.
+    "mynn_fixes_v61": (dict(bl_pbl_physics=5, sf_sfclay_physics=5),
+                       {"mynn_fixes_v61", "mynn_boulac_down_sign"}),
+    # ML1's second key (3.0.3): on by default, echoed only where the BouLac
+    # (8) or k-epsilon (17) PBL reads it.
+    "pbl_boulac_down_sign": (dict(bl_pbl_physics=8, sf_sfclay_physics=1),
+                             {"pbl_boulac_down_sign"}),
     "cycling": (dict(bl_mynn_version="gsd_41", cycling=True),
                 {"bl_mynn_version", "cycling"}),
     "diff_6th_form": (dict(diff_6th_form="noaa_wrf39", diff_6th_factor2=0.04),
@@ -199,7 +207,8 @@ DEFAULT_OFF = frozenset({
     "mynn_sfclay_variant",
     # WRF v4.8.0 MYNN-SFC roughness keys, absent at their Registry defaults.
     "sf_mynn_sfcflux_land", "sf_mynn_sfcflux_water", "shalwater_z0",
-    # The upstream MYNN v6.1 fixes, absent while off.
+    # The upstream MYNN v6.1 fixes (correct-mode MY1): default on, echoed
+    # only under the wrf_461 MYNN PBL; this fixture runs no PBL.
     "mynn_fixes_v61",
     # WRF v4.8.0 assembly: dynamic lightning (option 0), the gwd_opt = 1
     # generation and its two keys (gwd_opt 0), and the Shin-Hong generation
@@ -267,6 +276,12 @@ DEFAULT_OFF = frozenset({
     "hydrometeor_handover_numbers",
     # SN1 (Noah-MP snowmelt-reset ESTG): read by Noah-MP only, so absent here.
     "noahmp_melt_reset_esat",
+    # 3.0.3 ML1 (MYNN BouLac downward length sign): read by MYNN only, so
+    # absent here.
+    "mynn_boulac_down_sign",
+    # 3.0.3 ML1's second key (BouLac and k-epsilon PBL length sign): read by
+    # those PBLs only, so absent here.
+    "pbl_boulac_down_sign",
     # 2.9.7 tc/nest: the nest accumulation archive is echoed only on a nested
     # domain with the archive on (restart._drop_inert_nest_archive); this
     # fixture is not nested, so it is absent, as in a 2.9.6 header.

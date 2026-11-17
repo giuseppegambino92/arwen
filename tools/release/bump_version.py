@@ -41,6 +41,16 @@ changelog were three weeks old.
 version, so the release contract set refuses the stale tag. It also names a
 README link with a relative target, which is a 404 on the PyPI page.
 
+And it moves the install lines a user copies: every pinned install of the
+engine in the README, the AMD page and the setup guide, and the README's release
+notes and integration kit links. They named the last release by hand: the
+3.0.2 candidate's README said ``==3.0.1`` until the cut battery's front page
+caught it (fixed by hand, 84f22b9076), the sealed 3.0.3 candidate's said
+``==3.0.2``, which the public index did not have ("No matching distribution
+found for gpuwm==3.0.2"), and the setup guide still said ``==2.9.2``.
+``--check`` names each such line whose version is not ``pyproject.toml``'s,
+and the battery runs ``--check`` before the freeze.
+
 Usage:
   python tools/release/bump_version.py --to 2.7.5    # rewrite, open the changelog section
   python tools/release/bump_version.py --check       # exit 1 naming any file out of step
@@ -78,6 +88,22 @@ CHANGELOG = "CHANGELOG.md"
 TAG_LINK_FILES = ("README.md", "docs/public/receipts/resolved-scale-disclaimer.json")
 TAG_LINK = re.compile(
     r"(https://github\.com/(?:recastsystems/arwen|FahrenheitResearch/arwen)/(?:blob|tree|raw)/v)(\d+\.\d+\.\d+)(/)")
+
+#: What a user is told to install, where the version is the release being cut:
+#: (files, pattern, the groups that carry the version, what the line is).
+#: ``gpuwm-hex==`` and ``gpuwm-data==`` are other packages and do not match;
+#: the desktop downloads keep their own release and are not matched either.
+INSTALL_PIN = re.compile(r"((?<![\w.-])gpuwm(?:\[[\w,-]+\])?==)(\d+\.\d+\.\d+)(?![\w.+-])")
+RELEASE_TAG_LINK = re.compile(
+    r"(https://github\.com/(?:recastsystems/arwen|FahrenheitResearch/arwen)/releases/tag/v)(\d+\.\d+\.\d+)(?![\w.])")
+KIT_LINK = re.compile(
+    r"(https://github\.com/(?:recastsystems/arwen|FahrenheitResearch/arwen)/releases/download/v)(\d+\.\d+\.\d+)"
+    r"(/ArWen-)(\d+\.\d+\.\d+)(-Integration-Kit\.zip)")
+RELEASE_PINS = (
+    (("README.md", "docs/amd-backend.md", "docs/public/SETUP.md"), INSTALL_PIN, (2,), "a pip install of gpuwm"),
+    (("README.md",), RELEASE_TAG_LINK, (2,), "the release notes link"),
+    (("README.md",), KIT_LINK, (2, 4), "the integration kit link"),
+)
 
 #: The generator of the two binary licence notices, and the notices it writes.
 NOTICE_TOOL = "tools/update_tui_license_notice.py"
@@ -122,6 +148,49 @@ def tag_links(root: Path) -> list[tuple[str, int, str]]:
     return found
 
 
+def release_pins(root: Path) -> list[tuple[str, int, str, str]]:
+    """Every (file, line, version, what) install line or release link that names a release."""
+    found = []
+    for files, pattern, groups, what in RELEASE_PINS:
+        for relative in files:
+            path = root / relative
+            if not path.is_file():
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for match in pattern.finditer(line):
+                    versions = dict.fromkeys(match.group(g) for g in groups)
+                    found.extend((relative, number, version, what) for version in versions)
+    return found
+
+
+def _move_pins(root: Path, to: str) -> list[str]:
+    """Rewrite every release pin to ``to``; the files changed."""
+    touched = []
+    for relative in dict.fromkeys(r for files, _, _, _ in RELEASE_PINS for r in files):
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = path.read_bytes().decode("utf-8")
+        moved = text
+        for files, pattern, groups, _ in RELEASE_PINS:
+            if relative not in files:
+                continue
+
+            def sub(match: re.Match, groups=groups) -> str:
+                whole, base, out, last = match.group(0), match.start(0), [], 0
+                for g in sorted(groups):
+                    start, end = match.span(g)
+                    out.extend((whole[last:start - base], to))
+                    last = end - base
+                return "".join(out) + whole[last:]
+
+            moved = pattern.sub(sub, moved)
+        if moved != text:
+            path.write_bytes(moved.encode("utf-8"))
+            touched.append(relative)
+    return touched
+
+
 #: A Markdown link or HTML href/src target in the README that is not absolute.
 #: The README is also the PyPI page, where a relative target resolves under
 #: pypi.org/project/gpuwm/ and is a 404: the 2.9.3 page carried eleven such
@@ -146,6 +215,8 @@ def disagreements(root: Path) -> list[str]:
     wrong = [f"{relative} says {version}, pyproject.toml says {lead}" for relative, version in found if version != lead]
     wrong.extend(f"{relative}:{number} links the v{version} tree, pyproject.toml says {lead}"
                  for relative, number, version in tag_links(root) if version != lead)
+    wrong.extend(f"{relative}:{number}: {what} names {version}, pyproject.toml says {lead}"
+                 for relative, number, version, what in release_pins(root) if version != lead)
     wrong.extend(f"README.md:{number} links {target} relatively, a 404 on the PyPI page; "
                  f"link https://github.com/recastsystems/arwen/blob/v{lead}/{target}"
                  for number, target in relative_links(root))
@@ -194,6 +265,7 @@ def bump(root: Path, to: str) -> list[str]:
             text = path.read_bytes().decode("utf-8")
             path.write_bytes(TAG_LINK.sub(lambda m: m.group(1) + to + m.group(3), text).encode("utf-8"))
             touched.append(relative)
+    touched.extend(r for r in _move_pins(root, to) if r not in touched)
     if open_changelog(root, to):
         touched.append(CHANGELOG)
     touched.extend(refresh_terminal_notices(root))

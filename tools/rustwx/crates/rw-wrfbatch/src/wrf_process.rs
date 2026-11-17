@@ -3062,6 +3062,24 @@ fn read_wrf_products(
         }
     }
 
+    // The named derived heat, fire and lightning products read wrf-core's
+    // memoized 3-D fields (temp, pres, QVAPOR, height_agl, PH, PHB, ua, va,
+    // wa, dbz). They are computed here, while the diagnostics above have left
+    // that cache warm, not after the volume build below has released it:
+    // after the release each of their reads rebuilt its whole chain (7.5 s of
+    // a 1400x981x59 hex window frame's 30 s import, 2026-11-15). Their part
+    // joins the hour where it always joined, after the volumes, so the hour
+    // holds the same fields in the same order.
+    let mut derived_part = WrfHourFields {
+        grid: fields.grid.clone(),
+        projection: fields.projection.clone(),
+        canonical: Vec::new(),
+        derived: Vec::new(),
+        volumes: Vec::new(),
+        notes: Vec::new(),
+    };
+    derived_diagnostics::compute(&mut derived_part, file, timeidx, &grid, projection.clone(), options);
+
     // Isobaric sounding volumes (temperature_iso/dewpoint_iso/u_iso/v_iso/
     // height_iso) so imported WRF runs produce skew-T soundings like the
     // downloaded models. Failure here never fails the hour — the 2D fields
@@ -3156,7 +3174,9 @@ fn read_wrf_products(
         }
     }
 
-    derived_diagnostics::compute(&mut fields, file, timeidx, &grid, projection.clone(), options);
+    fields.canonical.extend(derived_part.canonical);
+    fields.derived.extend(derived_part.derived);
+    fields.notes.extend(derived_part.notes);
 
     // Release wrf-core's per-timestep intermediate cache before the caller
     // writes the hour to the store. `getvar` memoizes every 3-D f64

@@ -359,10 +359,13 @@ def test_new_fields_are_reviewed_defaults_appended_last():
     assert names.pop() == "opt_snow_compact"
     assert RunConfig.__dataclass_fields__["opt_snow_compact"].default == 1
     assert RunConfig.__dataclass_fields__["opt_snow_compact"].kw_only
-    # The upstream MYNN v6.1 fixes (lane/mynn-v61-arwen-option), off by
-    # default, appended last and keyword-only.
+    # The upstream MYNN v6.1 fixes (lane/mynn-v61-arwen-option), appended
+    # last and keyword-only; correct-mode MY1 since 3.0.3, so their default
+    # is the correct-mode default (on, off in a strict process).
+    from gpuwm import correct_mode as _cm
     assert names.pop() == "mynn_fixes_v61"
-    assert RunConfig.__dataclass_fields__["mynn_fixes_v61"].default is False
+    assert (RunConfig.__dataclass_fields__["mynn_fixes_v61"].default
+            is _cm.CORRECT_KEYS_DEFAULT)
     assert RunConfig.__dataclass_fields__["mynn_fixes_v61"].kw_only
     # WRF v4.8.0 port: cu_physics=3's generation (GFL default, GFDRV the
     # previous pin), appended last and keyword-only.
@@ -551,6 +554,12 @@ def test_new_fields_are_reviewed_defaults_appended_last():
     from gpuwm import correct_mode
     assert names[-4:] == ['sf_ocean_physics', 'oml_hml0', 'oml_gamma', 'oml_relaxation_time']
     names = names[:-4]
+    # 3.0.3 ML1's second key (BouLac and k-epsilon PBL length sign).
+    assert names.pop() == 'pbl_boulac_down_sign'
+    assert RunConfig.__dataclass_fields__['pbl_boulac_down_sign'].kw_only
+    # 3.0.3 ML1 (MYNN BouLac downward length sign), keyword-only like HN1.
+    assert names.pop() == 'mynn_boulac_down_sign'
+    assert RunConfig.__dataclass_fields__['mynn_boulac_down_sign'].kw_only
     # 2.9.14 SN1 (Noah-MP snowmelt reset), keyword-only like HN1.
     assert names.pop() == 'noahmp_melt_reset_esat'
     assert RunConfig.__dataclass_fields__['noahmp_melt_reset_esat'].kw_only
@@ -568,7 +577,7 @@ def test_new_fields_are_reviewed_defaults_appended_last():
      'wdm6_conservative_surface', 'thompson_cloud_surface_booking',
      'wsm3_conservative_surface', 'wsm5_conservative_surface',
      'wsm7_conservative_surface', 'hydrometeor_handover_numbers',
-     'noahmp_melt_reset_esat'):
+     'noahmp_melt_reset_esat', 'mynn_boulac_down_sign', 'pbl_boulac_down_sign'):
         assert RunConfig.__dataclass_fields__[field].default is correct_mode.CORRECT_KEYS_DEFAULT
         assert correct_mode.CORRECT_KEYS_DEFAULT is (not correct_mode.STRICT)
     from gpuwm.lightning_contract import LIGHTNING_DEFAULTS
@@ -997,6 +1006,10 @@ def _check_frozen_defaults(actual):
     assert actual.pop("hydrometeor_handover_numbers") is CORRECT_KEYS_DEFAULT
     # 2.9.14: SN1, the Noah-MP snowmelt reset, same default.
     assert actual.pop("noahmp_melt_reset_esat") is CORRECT_KEYS_DEFAULT
+    # 3.0.3: ML1, the MYNN BouLac downward length sign, same default.
+    assert actual.pop("mynn_boulac_down_sign") is CORRECT_KEYS_DEFAULT
+    # 3.0.3: ML1's second key, the BouLac and k-epsilon PBL length sign.
+    assert actual.pop("pbl_boulac_down_sign") is CORRECT_KEYS_DEFAULT
     # Declared default correction, 2.8.8 (test above).
     assert actual.pop("terrain_clock") == "local_face"
     assert actual.pop("use_rap_aero_icbc") is False
@@ -1020,6 +1033,7 @@ def _check_frozen_defaults(actual):
     assert actual.pop("bl_mynn_mixnumcon") == 0
     assert actual.pop("tempo_ml_for_bl_nc") is False
     assert actual.pop("tempo_surface_emission_before") is False
+    # Declared default, upstream latest-as-default (decided 2026-11-08): TEMPO
     # v3.2.5 with hail-hyperaware; v3.0.3 stays selectable by name.
     assert actual.pop("tempo_version") == "v3.2.5"
     assert actual.pop("tempo_hailhyperaware") is True
@@ -1042,8 +1056,8 @@ def _check_frozen_defaults(actual):
     assert actual.pop("sf_mynn_sfcflux_land") == 0
     assert actual.pop("sf_mynn_sfcflux_water") == 1
     assert actual.pop("shalwater_z0") == 0
-    # The upstream MYNN v6.1 fixes, off as every build before them ran.
-    assert actual.pop("mynn_fixes_v61") is False
+    # 3.0.3: MY1, the upstream MYNN v6.1 fixes, the correct-mode default.
+    assert actual.pop("mynn_fixes_v61") is CORRECT_KEYS_DEFAULT
     assert actual.pop("fractional_seaice") == 0
     # The WRF v4.6.1 filter form and no zero-out pass, as before.
     from gpuwm.config import G3_RUN_DEFAULTS

@@ -2254,7 +2254,7 @@ def test_mp28_driver_aliases_the_scheme_accumulators_instead_of_copies():
 
     shapes = pf.physics_array_shapes(RunConfig(**_TINY, **_MP28, **_MP28_PBL))
     assert not any(name.startswith("microphysics/") for name in shapes), (
-        "mp=28 still budgets private driver-owned precipitation arrays")
+        "mp=28 still budgets driver-local precipitation arrays")
 
     control = pf.physics_array_shapes(
         RunConfig(**_TINY, moist=True, mp_physics=0, **_MP28_PBL))

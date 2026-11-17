@@ -1766,12 +1766,13 @@ impl App {
                     // A second desktop launch over this output root: land the
                     // user on the workspace that is open, or open one.
                     let running=self.companion.child_pid();
-                    let newly_enabled = *enable_local_da && !self.enable_local_da;
-                    self.enable_local_da |= *enable_local_da;
+                    // The opt-in is read and ignored: the engine command it
+                    // unlocked was removed in gpuwm 3.0.3.
+                    let asked_for_local_da = *enable_local_da;
                     if running.is_none(){self.open_companion();}
                     match self.companion.child_pid(){
-                        Some(pid)=>{focus_process_window(pid);Ok(if running.is_some() && newly_enabled {
-                            "Local DA is enabled for the next visual workspace. Close this visual window, then reopen with --enable-local-da. Running forecasts are preserved.".into()
+                        Some(pid)=>{focus_process_window(pid);Ok(if asked_for_local_da {
+                            LOCAL_DA_REMOVED.into()
                         } else if running.is_some(){"Visual workspace is already open.".into()}else{self.status.clone()})}
                         None=>Err(self.status.clone()),
                     }
@@ -5951,6 +5952,9 @@ fn snapshot_dimension(
         })
 }
 
+/// What a request for the removed local data assimilation is told.
+const LOCAL_DA_REMOVED: &str = "gpuwm local-da was removed in gpuwm 3.0.3: it was an experimental local data assimilation that is no longer maintained.";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::hint::black_box(GPUWM_BRIDGE_SOURCE_REV_STAMP);
     let mut app = App::new()?;
@@ -5971,7 +5975,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.companion.explicit_path = Some(absolute(PathBuf::from(args.next().ok_or("--companion needs an executable")?), &app.cwd));
             }
             "--open-companion" => open_companion = true,
-            "--enable-local-da" => app.enable_local_da = true,
+            // gpuwm 3.0.3 removed the local data assimilation. The switch is
+            // still accepted so an old launcher line opens the terminal, and
+            // the handoff keeps publishing local_da as false.
+            "--enable-local-da" => eprintln!("arwen-tui: --enable-local-da does nothing: {LOCAL_DA_REMOVED}"),
             "--headless-companion" => headless_companion = true,
             "--desktop-console" => desktop_console = true,
             "--connect-node" => connect_node = true,

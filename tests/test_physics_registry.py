@@ -1648,8 +1648,12 @@ def test_mynn_component_dependencies_are_the_wrf_v461_cells():
     ] == {
         "surface_layer": ["revised-mm5", "classic-mm5", "mynn"]}
     sase = components["pbl"]["options"]["sase"]["constraints"]
+    # "gfs" on the same field contract (3.0.3): the GFS layer writes all
+    # four of ust/hfx/qfx/wspd, and the run door always started the pair.
     assert sase["requires_components"]["surface_layer"] == [
-        "revised-mm5", "classic-mm5", "mynn", "pleim-xiu"]
+        "revised-mm5", "classic-mm5", "mynn", "pleim-xiu", "gfs"]
+    assert "sase" in components["surface_layer"]["options"]["gfs"][
+        "constraints"]["requires_components"]["pbl"]
     # The cadence pin went with it: the driver runs SASE at bldt_seconds
     # and holds/recouples its tendencies across skipped calls, and
     # tests/test_sase_cadence*.py exercise 0.1 s and 5.0 s.

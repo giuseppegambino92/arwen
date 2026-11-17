@@ -436,7 +436,7 @@ def test_tropical_points_get_the_halved_root_clock(tmp_path, capsys):
 
     A 12 km Mercator domain at Manila on the wizard's own 60 s clock
     destabilised at +1 h; the same domain at a shorter step completed
-    6 h.  The emitted rationale names the co-located v1.1 CFL gate.
+    6 h.  The emitted rationale names the gate's vertical Courant number.
     """
     from gpuwm.domain_wizard import (ROOT_TIME_STEP_S,
                                      TROPICAL_ROOT_TIME_STEP_S,
@@ -456,7 +456,7 @@ def test_tropical_points_get_the_halved_root_clock(tmp_path, capsys):
     raw = tomllib.loads(text)
     assert raw["domain"][0]["time_step"] == TROPICAL_ROOT_TIME_STEP_S
     assert "TROPICAL CLOCK" in text
-    assert "co-located vertical" in text
+    assert "eta-coordinate vertical Courant number" in text
     # The chain still derives exactly, and the config still loads.
     exp = experiment_from_text(text, source=str(out))
     assert exp.root.time_step == TROPICAL_ROOT_TIME_STEP_S

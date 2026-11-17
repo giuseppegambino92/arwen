@@ -981,7 +981,8 @@ def raster_device_env(env: dict[str, str]) -> tuple[dict[str, str], str]:
     CUDA's device 0 with nothing saying so. Here the card is the first one
     ``CUDA_VISIBLE_DEVICES`` exposes (``RUSTWX_RASTER_DEVICE=<n>`` picks
     another visible one); a card lease that names its cards only in
-    ``GPU_MUTEX_CARDS`` is turned into ``CUDA_VISIBLE_DEVICES``; with no
+    the host card queue (:mod:`gpuwm.core.card_queue`) is turned into
+    ``CUDA_VISIBLE_DEVICES``; with no
     card visible the fill is pinned to the CPU. Returns the environment
     and one line naming the choice.
     """
@@ -991,7 +992,9 @@ def raster_device_env(env: dict[str, str]) -> tuple[dict[str, str], str]:
     if explicit.lower() == "cpu":
         return env, "raster fills on the CPU (RUSTWX_RASTER_DEVICE=cpu)"
     visible = env.get("CUDA_VISIBLE_DEVICES")
-    leased = env.get("GPU_MUTEX_CARDS", "").strip()
+    from gpuwm.core.card_queue import queue_value
+
+    leased = (queue_value("CARDS", env) or "").strip()
     if visible is None and leased:
         env["CUDA_VISIBLE_DEVICES"] = visible = leased
         env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")

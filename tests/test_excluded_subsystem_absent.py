@@ -66,7 +66,26 @@ from pathlib import Path
 
 import pytest
 
-_LAW_FILE = "CLA" "UDE.md"  # the repository law file, named in two pieces so no shipped text carries the name whole
+from tools.release_exclusions import private_test_controls
+
+#: The excluded subsystem's names, the agents' law file and the planted
+#: controls are private: they come from the never-shipped
+#: work/release_private_markers.py.  A published snapshot has none of them and
+#: nothing private to find, so it runs the same mechanism on neutral
+#: placeholder tokens of the same count.
+_CONTROLS = private_test_controls()
+_LAW_FILE = _CONTROLS.get("law_file") or "AGENTS.md"  # a repository law file the release excludes
+_NAME = _CONTROLS.get("excluded_name") or "excludedtoken"
+
+#: In a published snapshot (no work/, so no private markers) the planted names
+#: are the placeholders above, which only this file holds, and the private
+#: identity and organisation rules are absent. The breakage this prevents: the
+#: 3.0.3 cut battery, run on the export, failed four tests here on the
+#: placeholders and on rules that exist only beside the markers file.
+_SNAPSHOT = not _CONTROLS
+_THIS_FILE = "tests/test_excluded_subsystem_absent.py"
+needs_private_markers = pytest.mark.skipif(
+    _SNAPSHOT, reason="the private markers file (work/) is not in a published snapshot")
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -120,17 +139,13 @@ VENDOR = ("tools/rustwx/vendor/", "tools/rw_wps/vendor/",
 #: this gate read none of them).
 RELEASE_EXCLUDE = ROOT / "RELEASE-EXCLUDE.txt"
 
-#: Tier 1, spelled in halves (see the module docstring).
-_TIER1 = tuple("".join(parts) for parts in (
-    ("wx", "mod"),        # the subsystem's own name
-    ("qn", "ag", "i"),    # its state banks
-    ("sil", "ver"),       # the agent, first word
-    ("iod", "ide"),       # the agent, second word
-    ("tape", "tum"),      # the reference tree it was ported from
-    ("ag", "i_"),         # identifier forms of the agent abbreviation
-    ("_ag", "i"),
-    ("re", "cast"),       # the org prefix; see _FALSE_POSITIVE below
-))
+#: Tier 1 (see the module docstring): the subsystem's own name, its state
+#: banks, the agent's two words, the reference tree it was ported from, two
+#: identifier forms of the agent abbreviation and the org prefix (see
+#: _FALSE_POSITIVE below), in that order, from the private controls.
+_TIER1 = tuple(_CONTROLS.get("excluded_tier1") or (
+    _NAME, "excludedbank", "excludedagentone", "excludedagenttwo",
+    "excludedtree", "excludedabbr_", "_excludedabbr", "excludedorg"))
 
 #: Tier 1 additions the original exclusion list did not name.  These are
 #: the false negatives that made a name-only filter unsafe: local
@@ -551,6 +566,8 @@ def test_no_tracked_source_contains_the_excluded_subsystem():
         path = ROOT / name
         if not path.is_file():
             continue
+        if _SNAPSHOT and name == _THIS_FILE:
+            continue  # its placeholders are the planted names in a snapshot
         raw = path.read_bytes()
         if b"\0" in raw[:8192]:
             continue  # a binary asset; a byte pattern there is not source
@@ -701,7 +718,7 @@ def test_the_generated_document_carve_out_still_catches_a_NEW_name():
     # And Tier 1 is untouched by the carve-out: it is checked before the
     # length test ever runs, so a Tier-1 name on a minified line is still
     # an offender no matter what the base carried.
-    assert _tier1_match(carried + "".join(("wx", "mod"))) is not None
+    assert _tier1_match(carried + _NAME) is not None
 
 
 #: One raw commit object per record.  ``git cat-file --batch`` is read
@@ -917,6 +934,7 @@ def test_the_generated_message_allowance_is_exactly_its_history():
         f"{sorted(set(expected) - set(identity['commits']))[:10]}")
 
 
+@needs_private_markers
 def test_the_identity_allowance_excuses_only_its_registered_shas():
     """Lead ruling 2026-10-07: the identity is registered up to its cutoff,
     and a commit after it with the same identity is still refused."""
@@ -928,7 +946,7 @@ def test_the_identity_allowance_excuses_only_its_registered_shas():
     record = (fresh, mis_set + "an ordinary subject\n")
     assert _identity_only(record[1])
     assert _message_offenders([record], _MESSAGE_ALLOWANCE)
-    named = (fresh, mis_set + "wire the " + "".join(("wx", "mod")) + " hooks\n")
+    named = (fresh, mis_set + "wire the " + _NAME + " hooks\n")
     assert not _identity_only(named[1])
     data = _generated_message_allowance()
     for sha in (data.get("identity") or {}).get("commits", [])[:1]:
@@ -936,6 +954,7 @@ def test_the_identity_allowance_excuses_only_its_registered_shas():
         assert not _message_offenders([(sha, record[1])], _MESSAGE_ALLOWANCE)
 
 
+@needs_private_markers
 def test_the_message_scan_still_reports_a_new_commit():
     """The allowance excuses its own SHAs and nothing else.
 
@@ -946,7 +965,7 @@ def test_the_message_scan_still_reports_a_new_commit():
     the case the earlier line-based parser excused.
     """
 
-    name = "".join(("wx", "mod"))
+    name = _NAME
     prefix = "".join(("re", "cast"))
     registered = next(iter(_MESSAGE_ALLOWANCE))
     fresh = "f" * 40
@@ -970,6 +989,7 @@ def test_the_diff_scans_tier1_pattern_fires_on_a_code_line():
     assert _tier1_match(intruder) is not None
 
 
+@needs_private_markers
 def test_the_org_prefix_is_admitted_only_as_the_two_public_repository_paths():
     """3.0.0 (2026-11-10): arwen and gpuwm-hex are public under the organisation; nothing else under it is."""
 

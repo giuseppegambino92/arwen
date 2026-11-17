@@ -2510,7 +2510,7 @@ _ADAPTERS = (
         upstream_ingest="declarative_mapping_v1_over_packaged_profile",
         status=AdapterStatus.RUNNABLE_NOT_CERTIFIED,
         field_mapping="packaged-rw-wps-hex-history-netcdf-v1",
-        level_mapping="55-mpas-model-level-to-explicit-wrf-eta-v1",
+        level_mapping="frame-mpas-model-levels-to-explicit-wrf-eta-v1",
         cadence_mapping="mapping-declared-uniform-series",
         stock_wrf_gate="live-unchanged-stock-wrf-gate-pending",
         runnable=True,
@@ -2535,7 +2535,9 @@ _ADAPTERS = (
             "--window region-latlon:CLAT,CLON,W_KM,H_KM` (or global-mesh): "
             "those frames carry CF 1-D lat/lon/Time/level coordinates and "
             "the mass-grid earth winds this profile reads.  The mapping "
-            "decodes the 55 MPAS model levels directly (full pressure, "
+            "decodes the parent's own MPAS model levels directly, as many "
+            "as the frame carries (55 on the default suites, 59 on hrrrv5; "
+            "full pressure, "
             "heights from the init zgrid, T from theta with MPAS's kappa, "
             "q from the mixing ratio) with no pressure-level step.  SST is "
             "the water skin temperature, a named policy: hex carries no "

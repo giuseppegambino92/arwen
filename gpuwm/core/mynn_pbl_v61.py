@@ -1,12 +1,17 @@
-"""Opt-in upstream MYNN v6.1 bug fixes on ArWen's WRF 4.6.1 MYNN (``mynn_fixes_v61``).
+"""Upstream MYNN v6.1 bug fixes on ArWen's WRF 4.6.1 MYNN (``mynn_fixes_v61``).
 
-The default MYNN route is the frozen WRF v4.6.1 unit ``kernels/mynn_pbl.cu``
+The WRF 4.6.1 MYNN route is the frozen WRF v4.6.1 unit ``kernels/mynn_pbl.cu``
 and the WRF v4.6.1 ``SFCLAY_mynn`` first-step block.  NCAR's official MYNN
 homes (NCAR/MYNN-EDMF v6.1.1 2b2da61b05a8, NCAR/MYNN-SFC v6.1.0 a038a9ea35a1,
 both Apache-2.0, J. Olson, NOAA GSL) have since fixed defects that the WRF
 4.6.1 lineage still carries.  ``RunConfig.mynn_fixes_v61 = True`` runs the
-ones that apply to that lineage; ``False`` (the default) never reads this
-module, so every default run compiles and runs the same bytes as before.
+ones that apply to that lineage.  It is correct-mode finding MY1
+(gpuwm/correct_mode.py), so it is the default; ``False`` (physics.mode =
+'exact', a strict WRF process, or the key set false) never reads this
+module and compiles and runs the frozen unit's bytes, which every WRF 4.6.1
+parity proof names.  The key is read only by the MYNN PBL at the wrf_461
+generation (:func:`pbl_fixes_active`); the surface-layer part S1 only beside
+it, on the wrf_461 surface layer (:func:`sfclay_fixes_active`).
 
 Labelled: upstream MYNN v6.1 fixes, re-applied to the WRF 4.6.1 lineage;
 not bitwise to WRF and not bitwise to MYNN v6.1 (the rest of the scheme is
@@ -54,10 +59,14 @@ Not applicable to the WRF 4.6.1 lineage, so not carried:
 * MYNN-SFC winds relative to ocean currents: no current input on this route.
 * MYNN-EDMF stale cloud water in the theta tendency (sqc/sqi vs sqc2/sqi2):
   WRF 4.6.1 already uses the post-mixing sqc2/sqi2.
-* MYNN-EDMF plume sigma exponent sign + retuned plume excess (1935d2b) and
-  the BouLac downward length sign (399f50f): valid upstream fixes, not in
-  this lane's brief (the plume item is coupled to a retune of the excess
-  constants); PORT-PLAN.md items A3/A4.
+* MYNN-EDMF plume sigma exponent sign + retuned plume excess (1935d2b): a
+  valid upstream fix, not in this lane's brief (it is coupled to a retune of
+  the excess constants); PORT-PLAN.md item A3.
+* MYNN-EDMF BouLac downward length sign (399f50f, PR 94; PORT-PLAN.md A4):
+  carried by correct mode, not by this unit, as finding ML1
+  (``RunConfig.mynn_boulac_down_sign``, the ``MYNN_BOULAC_DOWN_SIGN`` define
+  of the two mixing-length kernels), so it is on by default and reaches
+  gsd_41 as well; those kernels are not in :data:`MYNN_V61_FUNCS`.
 """
 
 from __future__ import annotations
@@ -165,6 +174,25 @@ def mynn_v61_source(frozen: str) -> str:
     return MYNN_V61_NOTICE + text
 
 
+def pbl_fixes_active(cfg) -> bool:
+    """Whether a run's MYNN PBL runs the v6.1 fixes: the key is on and the
+    PBL is MYNN at the wrf_461 generation (correct_mode.KEY_SCOPE and
+    KEY_GENERATIONS say the same, for the echo and the receipt)."""
+
+    return (getattr(cfg, "mynn_fixes_v61", False) is True
+            and int(getattr(cfg, "bl_pbl_physics", 0) or 0) == 5
+            and getattr(cfg, "bl_mynn_version", "wrf_461") == "wrf_461")
+
+
+def sfclay_fixes_active(cfg) -> bool:
+    """Whether the WRF 4.6.1 MYNN surface layer runs fix S1: beside an
+    active PBL fix set, on the wrf_461 surface-layer variant."""
+
+    return (pbl_fixes_active(cfg)
+            and int(getattr(cfg, "sf_sfclay_physics", 0) or 0) == 5
+            and getattr(cfg, "mynn_sfclay_variant", "wrf_461") == "wrf_461")
+
+
 def mynn_v61_kernel_name(func: str, fixes_v61: bool) -> str:
     """The module a MYNN kernel loads from: the variant only where it edits."""
 
@@ -194,4 +222,6 @@ __all__ = [
     "mynn_sfclay_cold_start",
     "mynn_v61_kernel_name",
     "mynn_v61_source",
+    "pbl_fixes_active",
+    "sfclay_fixes_active",
 ]

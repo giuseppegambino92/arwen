@@ -312,7 +312,10 @@ def test_the_sweep_reaches_the_data_assimilation_stack() -> None:
 
     walked, _absences, failures = sweep(("gpuwm.da",))
 
-    assert "gpuwm.da.letkf" in walked, sorted(walked)
+    # 3.0.3 removed the local data assimilation; what stays is the analysis
+    # door, IAU, radar heating, perturbations, products and operators.
+    assert "gpuwm.da.analysis_door" in walked, sorted(walked)
+    assert "gpuwm.da.letkf" not in walked, sorted(walked)
     assert len(walked) >= 15, walked
     assert not failures, [str(failure) for failure in failures]
 

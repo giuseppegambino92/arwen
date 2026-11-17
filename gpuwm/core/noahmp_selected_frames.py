@@ -54,7 +54,7 @@ READINGS = (
 )
 
 
-def selected_frames(profile=None, *, snow_papers=False, snow_layers=False):
+def selected_frames(profile=None, *, snow_papers=False, snow_layers=False, snow_lap=False):
     """Return prices and a readable measurement basis, without a CUDA import."""
     frames = {}
     stale = []
@@ -69,17 +69,28 @@ def selected_frames(profile=None, *, snow_papers=False, snow_layers=False):
         from pathlib import Path
         source = Path(__file__).with_name("kernels") / "snow_papers.cu"
         # Production loader: C++17, --ftz=false. Read with NVRTC 13.4.92,
-        # sm_120, fast and strict: default solver 1136 B local/thread, 9348 B
-        # shared/block, 138 registers (unchanged from the base image); the
-        # clean-snicar-layers image (Toon / five-band) 2000 B local, 10152 B
-        # shared, 255 registers; both packing exports have zero local.
-        # Reading: the clean-snicar-layers lane frame receipt (fast and strict).
+        # sm_120 and sm_89, and with NVRTC 13.4.59, sm_120, fast and strict:
+        # default solver 1136 B local/thread, Toon solver 1984 B. Both use
+        # 9348 B shared/block; register counts vary by target.
+        # tools/measure_snicar_frames.py records the complete source hash
+        # and the attributes of every exported function
+        # (docs/receipts/snicar-solver-fold-20261109/).
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         if digest == "1352163f7a42109d3bfcd3ae8f96eced72153034bd597f811fda9548572f2923":
             frames["snow_papers"] = 1984 if snow_layers else 1136
         else:
             frames["snow_papers"] = assumed_frame_bound()
             stale.append("snow_papers")
+    if snow_papers and snow_lap:
+        # Bytes, not text: a locale-decoded read (Windows cp1252) re-encodes the
+        # units' non-ASCII comment characters differently, so the identity would
+        # never match there and every LAP run would be priced at the assumed bound.
+        lap_source = source.read_bytes() + b"\n" + source.with_name("snow_lap.cu").read_bytes()
+        if hashlib.sha256(lap_source).hexdigest() == LAP_SOURCE_SHA256:
+            frames["snow_papers"] = max(frames["snow_papers"], LAP_FRAME_CEILING)
+        else:
+            frames["snow_papers"] = max(frames["snow_papers"], assumed_frame_bound())
+            stale.append("snow_lap")
     if stale:
         basis = ("selected Noah-MP frame sources changed: " + ", ".join(stale)
                  + "; priced at the assumed frame bound until remeasured")
@@ -88,6 +99,9 @@ def selected_frames(profile=None, *, snow_papers=False, snow_layers=False):
     else:
         basis = ("selected Noah-MP frames priced from the sm_120 / NVRTC 12.9.86 "
                  "measured ceiling; this compile platform was not read")
+    if snow_papers and snow_lap and "snow_lap" not in stale:
+        basis += ("; LAP shared solver: 2096 B/thread, source-bound ceiling "
+                  "read on sm_120 / NVRTC 13.4.59 and sm_89 / NVRTC 13.4.92")
     return frames, basis
 
 
@@ -116,3 +130,8 @@ def gecros_frame(profile=None):
     else:
         basis = "GECROS priced from sm_120 / NVRTC 13.0.88 measured ceiling (0 B/thread); not measured on this card"
     return 0, basis, True
+
+# Complete snow_papers + snow_lap translation unit, measured by
+# tools/measure_snicar_frames.py; both compiler modes and both target cards.
+LAP_SOURCE_SHA256 = "1991d6f510748bd8468949550595a43c6bcc8622c94c435d24217d2d053701f5"
+LAP_FRAME_CEILING = 2096

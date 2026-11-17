@@ -12,8 +12,8 @@ lic-snicar plus spd/snicar already carry a three-layer adding-doubling solve
 (Flanner et al. 2021 Appendix A) over soil or four glacier ice layers. They also
 feed layer-resolved absorbed solar into the snow/soil heat solve: kernel
 `noahmp_tsnosoi_snow_papers` puts the sub-surface absorption into the source term
-of the tridiagonal temperature solve. This lane adds the two missing choices: the
-Toon 1989 two-stream solver and the five-band mode. Both use the same
+of the tridiagonal temperature solve. The fold retains the two-stream solver from this lane and uses the spectra
+lane for the five-band mode. Both use the same
 layer-absorption hand-off, so layer heating works under every new choice.
 
 ## Options
@@ -21,18 +21,19 @@ layer-absorption hand-off, so layer heating works under every new choice.
 | Option | Values | Default | Label |
 | --- | --- | --- | --- |
 | `snicar_solver_opt` | 1 adding-doubling, 2 Toon 1989 two-stream | 1 | 2 is re-implemented from published descriptions, not bitwise to upstream |
-| `snicar_bandnumber_opt` | 480 bins, 5 bands | 480 | 5 is re-implemented from published descriptions, not bitwise to upstream |
+| `snicar_bandnumber_opt` | 1 five bands, 2 480 bins | 2 | 1 uses spectra-lane direct and diffuse flux-weighted optics |
 
 Both are read from `&noah_mp` or from TOML, and only when `opt_alb=3`. At their
 defaults they are absent from every identity (config echo, checkpoint identity,
 restart identity, forecast receipt). Default runs therefore keep their bytes. The
-default 480-bin AD path launches the unchanged `snow_papers_albedo` image, with the
-same 138 registers and 1136 B frame. Any new choice launches the separate image
-`snow_papers_albedo_layers`.
+default 480-bin AD path launches `snow_papers_albedo`. The two-stream choice
+launches `snow_papers_albedo_layers`. Both call the same `snicar_spectral`
+device function. Five-band mode calls the selected solver twice, with separate
+direct and diffuse tables, then combines their outputs on the GPU.
 
-Scope: glacier-ice columns always use the 480-bin adding-doubling solver. Only that
-solver carries the Fresnel ice interface of Whicker et al. 2022. This applies to
-both new options, and the identity records it.
+Glacier columns use adding-doubling with the Fresnel ice interface. The
+selected band count and spectrum still apply to those columns. The two-stream
+solver applies to snow over land. No glacier capability is disabled.
 
 ## Routine by routine
 
@@ -46,14 +47,15 @@ both new options, and the identity records it.
   - **Singularity at λ = 1/μ0.** Dang et al. 2019 sect. 7 shifts μ0 by ±0.02. We shift by a relative 1e-5, which is enough to clear the removable singularity in double precision.
   - **Absorption.** Each layer's absorption is the difference in net flux (diffuse down plus direct minus up) across it. The ground takes the net flux at the bottom, so absorption plus albedo equals 1.
 - **`ad_land`**: the existing adding-doubling arithmetic (`slab`, `add`, `netflux`; Flanner et al. 2021 Appendix A eqs A1-A20; Dang et al. 2019) as a routine for the dispatch paths. A test shows it reproduces the inline path exactly (`snow_ad_probe`).
-- **`bin_layer_optics`**: the same per-bin layer optics as the inline 480-bin path. It reads the existing generated Mie table (our Rust Lorenz-Mie code with CC0 refractiveindex.info inputs), the He et al. 2017 fits for internal BC and dust, and external impurities by mass. It contains no new physics.
-- **Five-band mode** (in `snow_albedo_body<true>`):
-  - **Band edges.** 0.3-0.7, 0.7-1.0, 1.0-1.2, 1.2-1.5 and 1.5-5 µm, from Dang et al. 2019 sect. 7. Our table starts at 0.2 µm, but the 0.2-0.3 µm bins carry zero G173 weight.
-  - **Band optics.** A Chandrasekhar mean, after Dang et al. 2019 eqs 15a-c, Thomas & Stamnes 1999 eq 9.27 and Flanner et al. 2007. Extinction and asymmetry are means weighted by incident flux. Single-scattering albedo is weighted by flux times α_λ, the hemispheric albedo of optically thick snow. We compute α_λ in **`thick_albedo`** as the semi-infinite delta-Eddington limit (u-1)/(u+1) of the layer's own optics; this is our choice.
-  - **Direct and diffuse sets.** Two sets of band properties are formed, one with the G173 direct spectrum and one with the G173 diffuse spectrum. Dang 2019 sect. 7 describes one set per illumination.
-  - **Broadband totals.** These use the same G173 band weights as the 480-bin path.
-  - **Determinism.** Each (illumination, band, layer) task runs on one thread in a fixed bin order, so the result is deterministic.
-  - **Reading of eqs 15b-c.** We read eqs 15b-c as flux-weighted means; the extracted text of the paper is ambiguous about their denominators.
+- **`snicar_spectral`**: one common spectral loop for both solver choices.
+  Its external-particle functor supplies either the packaged impurity rows or
+  LAP particle rows. The adding-doubling operations keep their order.
+- **Five-band mode**: `_five_band` in `gpuwm/core/snow_papers.py` retains the
+  spectra lane's direct and diffuse flux-weighted extinction and scattering,
+  scattering-weighted asymmetry, and incident band totals. It uses the chosen
+  ice and dust tables. LAP rows use the same weights in `_lap_five_band`.
+  The layers lane's Chandrasekhar-mean five-band implementation is retired;
+  its old five-band forecast receipts do not describe this chosen algorithm.
 - **`column_solve`**, `snow_column_probe`: the dispatch and a test probe.
 
 Python and config:
@@ -62,7 +64,7 @@ Python and config:
 - `gpuwm/config.py` holds the two fields, `NOAHMP_OPTION_IDENTITY_EVIDENCE` and `NOAHMP_OPTION_VALUES`, so `&noah_mp` import works.
 - `gpuwm/checkpoint_identity.py` keeps default values out of identities.
 - `noahmp_runtime.py` puts the non-default choices into the restart identity.
-- `noahmp_selected_frames.py` and `preflight.py` price frames bound to the source: 1136 B for the default image and 2000 B for the layers image. Both were read on sm_120 with NVRTC 13.4, fast and strict.
+- `noahmp_selected_frames.py` and `preflight.py` price frames bound to the current source digest. Changed sources use the assumed bound until measured.
 
 ## Data
 

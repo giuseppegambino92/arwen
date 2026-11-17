@@ -127,6 +127,7 @@ def fetch_project(project):
 
 #: Warn while there is still a release cycle to act: at this many releases of
 #: room or fewer, the line says who decides (a limit-increase request is a
+#: public post, deleting old files is the owner's per-item yes).
 WARN_RELEASES = 3
 
 

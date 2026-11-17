@@ -261,6 +261,15 @@ adjacent interfaces into `geopotential_height` on `["vertical", "y", "x"]`.
 Every column retains its own heights. Missing interfaces, nonfinite heights,
 and crossing layers refuse because they would misplace the mass levels.
 
+A NetCDF source whose files carry the column on their own coordinates (WRF's
+`bottom_top` and `bottom_top_stag`) may instead declare no `levels` and
+`"interface_levels": "from_file"`: every level and every interface the file
+offers is the column, and a file that offers N levels with other than N+1
+interfaces refuses. The packaged `hex-global` profiles do this, so a
+gpuwm-hex parent decodes on whatever level count its suite used (55 on the
+default suites, 59 on hrrrv5). A declared `levels` list beside it refuses,
+because it would cut the mass column the interfaces still bound.
+
 Interface heights may declare `time_binding = "cycle_invariant"`; assembly
 broadcasts the complete coordinate to each forecast time. Prognostic mass
 and soil fields still require valid-time data. Pressure remains a direct

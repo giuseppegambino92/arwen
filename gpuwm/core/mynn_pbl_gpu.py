@@ -679,8 +679,14 @@ def mynn_mixlength_default_cuda(
     bl_mynn_version: str = "wrf_461",
     bl_mynn_gsd41_unsquared_qtke: bool = False,
     scratch=None,
+    mynn_boulac_down_sign: bool = False,
 ) -> MynnMixlengthResult:
-    """Evaluate WRF ``mym_length`` options 1 and 2 on device columns."""
+    """Evaluate WRF ``mym_length`` options 1 and 2 on device columns.
+
+    ``mynn_boulac_down_sign`` is correct-mode ML1 (the BouLac downward
+    length's linear branch with NCAR/MYNN-EDMF 399f50f's sign); option 2
+    never runs BouLac, so it reaches option 1 only.
+    """
 
     if type(bl_mynn_mixlength) is not int or bl_mynn_mixlength not in (1, 2):
         raise ValueError("MYNN mixing length requires bl_mynn_mixlength=1 or 2")
@@ -715,7 +721,8 @@ def mynn_mixlength_default_cuda(
                          tuple(f"w{k}" for k in range(5)), (ncol, nz))
     blocks = (ncol + _TPB - 1) // _TPB
     _mynn_version_check(bl_mynn_version)
-    kernel = mynn_pbl_kernel("mynn_mixlength_default_columns", bl_mynn_version)
+    kernel = mynn_pbl_kernel("mynn_mixlength_default_columns", bl_mynn_version,
+                             mynn_boulac_down_sign=mynn_boulac_down_sign)
     # gsd_41 builds both options' buoyancy flux from flt, flq and the lowest
     # level's vt and vq (GSD MYNN v4.1 module_bl_mynn.F:920,1015); wrf_461 takes
     # fltv, so its argument list is the one it always had.
@@ -752,6 +759,7 @@ def mynn_turbulence_default_cuda(
     scratch=None,
     bl_mynn_version: str = "wrf_461",
     bl_mynn_gsd41_unsquared_qtke: bool = False,
+    mynn_boulac_down_sign: bool = False,
 ) -> MynnTurbulenceResult:
     """Evaluate default WRF ``mym_turbulence`` on complete GPU columns."""
 
@@ -822,7 +830,8 @@ def mynn_turbulence_default_cuda(
         **scalars,
     }, bl_mynn_mixlength=bl_mynn_mixlength, scratch=work,
         bl_mynn_version=bl_mynn_version,
-        bl_mynn_gsd41_unsquared_qtke=bl_mynn_gsd41_unsquared_qtke)
+        bl_mynn_gsd41_unsquared_qtke=bl_mynn_gsd41_unsquared_qtke,
+        mynn_boulac_down_sign=mynn_boulac_down_sign)
     # mynn_turbulence_default_interfaces returns before k == 0, so the surface element of all
     # nine products keeps the zero WRF gave them.  Same reasoning as above.
     products = work.one(SLOT_TURBULENCE,
@@ -1051,13 +1060,31 @@ def _mynn_version_check(bl_mynn_version: str) -> None:
             f"this solver carries ({', '.join(MYNN_VERSIONS)}).")
 
 
+#: The define that compiles correct-mode ML1 (the BouLac downward length's
+#: linear branch with the sign of NCAR/MYNN-EDMF 399f50f,
+#: RunConfig.mynn_boulac_down_sign) into the two kernels that run
+#: ``mynn_boulac_elblavg``.  Every other kernel compiles without it.
+MYNN_BOULAC_DOWN_SIGN_DEFINE = (("MYNN_BOULAC_DOWN_SIGN", 1),)
+MYNN_BOULAC_DOWN_SIGN_FUNCS = frozenset({
+    "mynn_mixlength_default_columns", "mynn_initialize_default_columns"})
+#: The generations whose length kernels are this unit's (wrf_471 and wrf_480
+#: are their own sources and do not read ML1).
+MYNN_BOULAC_DOWN_SIGN_VERSIONS = ("wrf_461", "gsd_41")
+
+
 def mynn_pbl_kernel(func: str, bl_mynn_version: str = "wrf_461", shape=(),
-                    mynn_fixes_v61: bool = False):
+                    mynn_fixes_v61: bool = False,
+                    mynn_boulac_down_sign: bool = False):
     """The ``mynn_pbl.cu`` kernel ``func`` compiled for one MYNN generation.
 
     ``mynn_fixes_v61`` (RunConfig.mynn_fixes_v61) loads the kernels the
     upstream MYNN v6.1 fixes edit from the ``mynn_pbl_v61`` unit
     (gpuwm/core/mynn_pbl_v61.py); it is a wrf_461 option only.
+
+    ``mynn_boulac_down_sign`` (correct-mode ML1) compiles the two mixing
+    length kernels with ``MYNN_BOULAC_DOWN_SIGN``: the BouLac downward
+    length's linear branch with NCAR/MYNN-EDMF 399f50f's sign.  Off, every
+    kernel is the WRF v4.6.1 (or gsd_41) build as before.
     """
 
     _mynn_version_check(bl_mynn_version)
@@ -1065,11 +1092,19 @@ def mynn_pbl_kernel(func: str, bl_mynn_version: str = "wrf_461", shape=(),
         if bl_mynn_version != "wrf_461":
             raise ValueError("mynn_fixes_v61 edits the wrf_461 unit; "
                              f"bl_mynn_version={bl_mynn_version!r} is another source")
-        from gpuwm.core.mynn_pbl_v61 import mynn_v61_kernel_name
-        return get_kernel(mynn_v61_kernel_name(func, True), func, shape)
-    if bl_mynn_version == "wrf_461":
+        from gpuwm.core.mynn_pbl_v61 import MYNN_V61_FUNCS
+        if func in MYNN_V61_FUNCS:
+            return get_kernel("mynn_pbl_v61", func, shape)
+    defines = () if bl_mynn_version == "wrf_461" else (("MYNN_GSD41", 1),)
+    if mynn_boulac_down_sign and func in MYNN_BOULAC_DOWN_SIGN_FUNCS:
+        if bl_mynn_version not in MYNN_BOULAC_DOWN_SIGN_VERSIONS:
+            raise ValueError("mynn_boulac_down_sign is compiled into the "
+                             "wrf_461 and gsd_41 length kernels only, not "
+                             f"bl_mynn_version={bl_mynn_version!r}")
+        defines = defines + MYNN_BOULAC_DOWN_SIGN_DEFINE
+    if not defines:
         return get_kernel("mynn_pbl", func, shape)
-    return get_kernel_int_defines("mynn_pbl", func, (("MYNN_GSD41", 1),), shape)
+    return get_kernel_int_defines("mynn_pbl", func, defines, shape)
 
 
 _TENDENCIES_SOLVED = (
@@ -1378,6 +1413,7 @@ def mynn_initialize_default_cuda(
     scratch=None,
     bl_mynn_version: str = "wrf_461",
     bl_mynn_gsd41_unsquared_qtke: bool = False,
+    mynn_boulac_down_sign: bool = False,
 ) -> MynnInitializeResult:
     """Evaluate WRF ``mym_initialize`` on complete device columns.
 
@@ -1435,7 +1471,8 @@ def mynn_initialize_default_cuda(
     blocks = (ncol + _TPB - 1) // _TPB
     _mynn_version_check(bl_mynn_version)
     kernel = mynn_pbl_kernel("mynn_initialize_default_columns",
-                             bl_mynn_version)
+                             bl_mynn_version,
+                             mynn_boulac_down_sign=mynn_boulac_down_sign)
     gsd41_args = () if bl_mynn_version == "wrf_461" else (
         np.int32(1 if bl_mynn_gsd41_unsquared_qtke else 0),)
     kernel(
@@ -1798,6 +1835,7 @@ def mynn_bl_driver_cuda(
     bl_mynn_cloud_tendency_form: str = "wrf_461",
     initialize_qke: bool | None = None,
     mynn_fixes_v61: bool = False,
+    mynn_boulac_down_sign: bool = False,
 ) -> dict[str, cp.ndarray]:
     """Device twin of :func:`gpuwm.core.mynn_pbl.mynn_bl_driver`.
 
@@ -1815,6 +1853,13 @@ def mynn_bl_driver_cuda(
 
     if type(mynn_fixes_v61) is not bool:
         raise TypeError("mynn_fixes_v61 must be a bool")
+    if type(mynn_boulac_down_sign) is not bool:
+        raise TypeError("mynn_boulac_down_sign must be a bool")
+    if mynn_boulac_down_sign and bl_mynn_version not in MYNN_BOULAC_DOWN_SIGN_VERSIONS:
+        # ML1 is compiled into this unit's length kernels only; the WRF 4.7.1
+        # and 4.8.0 sources would run the old sign while the call claims it.
+        raise ValueError("mynn_boulac_down_sign is read on bl_mynn_version="
+                         f"'wrf_461' or 'gsd_41' only, got {bl_mynn_version!r}")
     if mynn_fixes_v61 and bl_mynn_version != "wrf_461":
         # The fixes are marked edits of the wrf_461 unit; another generation
         # would run without them while its run claims them.
@@ -2028,6 +2073,7 @@ def mynn_bl_driver_cuda(
             scratch=work,
             bl_mynn_version=bl_mynn_version,
             bl_mynn_gsd41_unsquared_qtke=bl_mynn_gsd41_unsquared_qtke,
+            mynn_boulac_down_sign=mynn_boulac_down_sign,
         )
         for name in ("el", "qke", "tsq", "qsq", "cov", "sm", "sh"):
             layers[name][...] = getattr(seeded, name)
@@ -2174,6 +2220,7 @@ def mynn_bl_driver_cuda(
         scratch=work,
         bl_mynn_version=bl_mynn_version,
         bl_mynn_gsd41_unsquared_qtke=bl_mynn_gsd41_unsquared_qtke,
+        mynn_boulac_down_sign=mynn_boulac_down_sign,
     )
 
     # ---- module_bl_mynn.F:1215-1221 prognostic solve ---------------------

@@ -386,6 +386,16 @@ def _variant_jobs(experiment, modules):
                           [(nz, ny, nx)])
                 tiers.extend(defines + shape_defines(name, FUNCTIONS[name][0], shape)
                              for shape in shapes)
+                if (name == "mynn_pbl"
+                        and int(getattr(run, "bl_pbl_physics", 0) or 0) == 5
+                        and getattr(run, "mynn_boulac_down_sign", False) is True
+                        and getattr(run, "bl_mynn_version", "wrf_461") in ("wrf_461", "gsd_41")):
+                    # Correct-mode ML1 compiles the two mixing-length kernels
+                    # with its define (gpuwm/core/mynn_pbl_gpu.py); the other
+                    # MYNN kernels keep the tiers above.
+                    # Neither of them is a shaped function (kernel_shape.FUNCTIONS).
+                    from gpuwm.core.mynn_pbl_gpu import MYNN_BOULAC_DOWN_SIGN_DEFINE
+                    tiers.append(defines + MYNN_BOULAC_DOWN_SIGN_DEFINE)
             for tier in tiers:
                 if (name, tier) in seen:
                     continue

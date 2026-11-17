@@ -192,15 +192,15 @@ bytes are outside the numerical oracle.
   `-ftz=true` to whatever the caller passed, at
   `cupy.cuda.compiler` line 585 (`options += ('-ftz=true',)`), after the
   caller's options, and NVRTC honours the last occurrence.
-  The inventory records 12 distinct caller-supplied option tuples across the
-  181 compile sites in the shipped package, each listed here with a site
+  The inventory records 11 distinct caller-supplied option tuples across the
+  178 compile sites in the shipped package, each listed here with a site
   that supplies it:
   - no caller options -- `gpuwm/backend/__init__.py:28` (self.xp.RawModule),
     and 128 other site(s)
-  - `-std=c++17` -- `gpuwm/core/acoustic_fusion.py:405` (cp.RawModule), and
-    15 other site(s)
   - `--std=c++17` -- `gpuwm/ensemble/batch_perturbation.py:51`
     (xp.RawModule), and 13 other site(s)
+  - `-std=c++17` -- `gpuwm/core/acoustic_fusion.py:405` (cp.RawModule), and
+    13 other site(s)
   - `-std=c++17` `--ftz=false` -- `gpuwm/core/chem_plumerise_cache.py:37`
     (compiler.compile_using_nvrtc), and 5 other site(s)
   - `--std=c++11` -- `gpuwm/hydro/module_history.py:72` (cp.RawModule), and
@@ -212,8 +212,6 @@ bytes are outside the numerical oracle.
   - `-std=c++17` `--fmad=false` `--ftz=false` --
     `gpuwm/core/thompson_fork.py:109` (compiler.compile_using_nvrtc), and 1
     other site(s)
-  - `--fmad=false` `-std=c++14` -- `gpuwm/da/letkf_device.py:363`
-    (cp.RawModule)
   - `--std=c++17` `--use_fast_math` --
     `gpuwm/ocean/waves/backends/voronoi.py:131` (cp.RawModule)
   - `--std=c++17` a target flag built from the device architecture at run

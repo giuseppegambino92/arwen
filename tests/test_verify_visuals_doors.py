@@ -64,7 +64,7 @@ def test_sim_carries_the_switch_to_its_in_process_runner(tmp_path, monkeypatch, 
     from gpuwm import capabilities, prepared_single_domain_forecast
 
     # The runner is stubbed, so the CuPy door check is too: without it the
-    # test failed on a CPU box with no cupy (a test host), before the switch.
+    # test failed on a CPU box with no cupy, before the switch.
     monkeypatch.setattr(capabilities, "require_for_command", lambda _: None)
     config = tmp_path / "experiment.toml"
     config.write_text("[experiment]\nname = 'door8'\n", encoding="utf-8")

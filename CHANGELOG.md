@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.0.3 (2026-11-16)
+
+New:
+- A nest under a hex parent can run at the parent's 15-minute frame spacing; `gpuwm domain --cadence-minutes` and `python -m gpuwm.local_posting --lead-minutes` name it.
+- `rw_compare` has the reference row `hrrr-nat`: HRRR isobaric planes built from its own hybrid levels, and mixed-layer CAPE planes from the run.
+- Maps of the u and v wind components at 10 m, 850, 700 and 500 hPa, in knots, with the full wind drawn as barbs.
+
+Changed:
+- Grid and spectral nudging refuse a strength that cannot be stable (`NUDGING_STEP_STRENGTH`), and the refusal names the largest admissible coefficient.
+- `gpuwm check` and the run's memory preflight price the Noah-MP SNICAR spectra and particle arrays.
+- `gpuwm verify-visuals RUN` applies `--domain`, `--first-hour` and `--last-hour` to a run folder, and `--domain` takes `1`, `d1` or `d01`.
+- `gpuwm domain` prints each warning once, and refuses a `--point` whose latitude and longitude look swapped.
+- `gpuwm go` and `gpuwm fetch` refuse a cycle due more than 24 h ahead unless `--wait-for-cycle` is given, and a wait line names the date when it is not today.
+- Rain and snowfall liquid-equivalent maps draw one colour per band, with every band the same length on the colour bar.
+- A host card queue's grant is read from `CARD_QUEUE_CARDS` and `CARD_QUEUE_DIR`; another prefix is named in `GPUWM_CARD_QUEUE_PREFIX` or `~/.config/gpuwm/card-queue.json`.
+
+Removed:
+- The experimental `gpuwm local-da` command and the modules only it used. `gpuwm local-da` prints that it was removed and exits 2; analysis starts, radar latent heating, ensemble perturbations and the observation operators stay.
+
+Fixed:
+- `gpuwm-hex add-nest` and `gpuwm prep --source hex-global` take the parent's model levels from its frames, so a nest under a 59-level parent on NOAA's hrrrv5 suite prepares and runs.
+- WPS output without `LAI12M` prepares and runs as WRF runs it when the land model does not read it.
+- The start's SNOALB over water is real.exe's 0.08 under `rdmaxalb`.
+- The start's VEGFRA and Noah soil blends run in real.exe's float32 order.
+- `gpuwm fetch-geog` gives land east of 180 degrees that the GMTED terrain stores as 0 m its Copernicus GLO-30 height.
+- Plan review admits the physics pairs the run starts: BouLac and SASE over the GFS surface layer, and the slab land model under the GFS, TEMF, QNSE or Pleim-Xiu surface layer.
+- The Thompson hail-table and fork-table builds fetch their pinned Ubuntu packages from Launchpad's librarian.
+- MYNN (`bl_pbl_physics = 5`, the default `wrf_461` generation) no longer deletes dew and frost: the NCAR/MYNN-EDMF v6.1.1 fixes (`mynn_fixes_v61`, finding MY1) are on by default, and `physics.mode = "exact"` keeps WRF 4.6.1's MYNN.
+- MYNN, BouLac and k-epsilon PBL take the downward mixing length with the right sign where a sinking parcel stops in a layer of constant potential temperature (finding ML1); `physics.mode = "exact"` keeps WRF's line.
+- Land use and soil beside 180 degrees are repaired as the tiles are read, on the WRF route and in `rw_mpas_static`.
+- ERA5 137-level preparation regrids a surface file on a different 0.25 degree lattice instead of refusing it.
+- A domain with sea ice in only some of its preparation slabs prepares.
+- A member-roster ensemble's first member runs in the directory its session claimed.
+- The stability check's vertical term is WRF's vertical Courant number, so a forecast over steep ground no longer stops while its flow is healthy.
+- Hub-height maps name their valid time, lead, start and model, and the power maps name their turbine.
+- `rw_mpas_convert --window mesh` draws a global start and frames the refined core of a globe refined by 2x.
+
 ## 3.0.2 (2026-11-13)
 
 New:
@@ -6284,9 +6321,9 @@ New:
   comparison was made for any DA run, so the standing no-ECC corruption
   screen has not been applied to any of these numbers. No velocity
   dealiasing: fold risk is masked and counted, not unwrapped.
-  [docs/da-nowcast-quickstart.md](docs/da-nowcast-quickstart.md) is the
+  docs/da-nowcast-quickstart.md is the
   path a stranger can follow, and
-  [docs/da-vs-wofs.md](docs/da-vs-wofs.md) sets the system beside
+  docs/da-vs-wofs.md sets the system beside
   Warn-on-Forecast line by line, including every line where it is
   smaller.
 - Grell-Freitas cumulus, `cu_physics = 3`. A scale-aware deep and shallow

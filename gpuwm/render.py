@@ -19,10 +19,10 @@ Two engines render:
   ``WORKAROUND:`` line on every run.
 
 The project render law ( 2026-08-06) reserves weather-field
-product plots for ``rw_wrfbatch`` and names exactly ONE permitted
-fallback, ``tools/da_nowcast_render.py``, which composes multi-panel
-sheets from a DA nowcast case directory and serves none of this door's
-products.  ``--engine auto`` therefore does not degrade: with no usable
+product plots for ``rw_wrfbatch``.  The one fallback it named, the DA
+nowcast's multi-panel sheet tool, served none of this door's products and
+was removed with the local data assimilation in 3.0.3.  ``--engine auto``
+therefore does not degrade: with no usable
 renderer it REFUSES, naming the missing artifact and ``gpuwm
 fetch-bridges``, at a nonzero exit.  It used to draw five weather
 fields with matplotlib and report success, which is how a box with a
@@ -2513,9 +2513,9 @@ def _unresolvable_renderer_refusal(reason: str) -> str:
 
     THE render-law fix (hidden-scope audit F7, 2026-08-18).  Weather
     fields belong to ``rw_wrfbatch``; the law (project render law,
-    2026-08-06) names exactly one fallback, ``da_nowcast_render.py``,
-    and that tool draws multi-panel sheets from a DA case directory --
-    it has no product for a wrfout's reflectivity, temperature, wind,
+    2026-08-06) named exactly one fallback, the DA nowcast's sheet tool
+    (removed in 3.0.3), which drew multi-panel sheets from a DA case
+    directory -- it had no product for a wrfout's reflectivity, temperature, wind,
     precipitation or OLR panel.  So there is nothing lawful to fall back
     to here, and the answer is a refusal that names the missing artifact
     and stages it.
@@ -2572,10 +2572,10 @@ def _unresolvable_renderer_refusal(reason: str) -> str:
 _RENDERER_SUBJECT = "the Rust renderer rw_wrfbatch, through gpuwm.rustwx"
 
 _RENDER_LAW_WHY = (
-    "The project render law ( 2026-08-06) permits exactly one "
-    "fallback for weather fields, `tools/da_nowcast_render.py`, and that "
-    "tool composes multi-panel sheets from a DA nowcast case directory "
-    "-- it serves none of this door's products.  `--engine auto` used to "
+    "The project render law ( 2026-08-06) reserves weather fields for the "
+    "Rust renderer; the one fallback it named composed DA nowcast sheets, "
+    "served none of this door's products, and is no longer shipped.  "
+    "`--engine auto` used to "
     "degrade to a SECOND fallback: on a box where bridge staging failed "
     "it drew composite reflectivity, 2 m temperature, 10 m wind, "
     "accumulated precipitation and OLR with matplotlib and exited 0, so "

@@ -478,6 +478,7 @@ Takes no options of its own.
 | `--ack ID` | declare a governed experiment, written verbatim into the emitted [experiment].acknowledgements. Repeatable. This door used to write the nocturnal declaration for you, which silenced the load guard at check/run/go/run-plan and both prepared runners for the life of the file; it no longer does, and refuses instead. The id it accepts is asymmetric-radiation-nocturnal-window-v1: a longwave-OFF suite over a window that includes local night, which you are running deliberately as a daytime-only experiment |
 | `--buffer-km KM[,KM...]` | with --polygon, nonnegative geometry buffer in kilometres; one value applies to every domain, or supply exactly one outer-to-inner value per level. Every value is measured from the polygon itself, not from the next inner grid: '800,300,0' puts the outer grid 800 km from the polygon, about 500 km beyond the middle one. With --ladder auto, a multi-value list selects the preset of that depth (default: zero) |
 | `--cadence HOURS` | boundary spacing in whole hours, validated against the selected product; required for a source that declares no cadence of its own (hex-global, mapped), where it is the spacing of the history files handed to gpuwm prep |
+| `--cadence-minutes MINUTES` | boundary spacing in minutes, for a source that declares no cadence of its own (hex-global: a hex parent's history frames, e.g. 15); a whole number of hours is the same as --cadence |
 | `--card` | GPU to size for: a tier (12gb/16gb/24gb/32gb), a size ('10gb'), or a model with a recorded size ('RTX 3080', '5070 Ti'); sets the VRAM budget with no local probe. With no --card, --vram-gib or --hardware-json the wizard MEASURES the local card's capacity (short-lived probe, suppressed by GPUWM_NO_LOCAL_GPU) and refuses, naming both flags, when there is nothing to measure |
 | `--chain R1,R2,...` | custom nest refinement ratios, integers in [2, 8] (e.g. --root-dx 3 --chain 4 for 3 km -> 750 m); omit for a single domain at --root-dx. Sized by the same estimator fit loop as the presets |
 | `--clock {auto,adaptive,fixed}` | how the run steps. adaptive: each grid starts at the emitted time_step and then follows its own Courant number between 3 and 8 s per km of its spacing (WRF's use_adaptive_time_step, written into [shared]); the terrain clock still caps it over steep ground at launch. fixed: one step throughout. auto (default): adaptive when every grid starts inside those bounds and lies within the 500 m to 12 km spacings the terrain clock measured, fixed otherwise (the tropical clock's 2.5 s per km is always fixed). adaptive on a grid outside the bounds is refused, naming the grid |
@@ -826,6 +827,7 @@ Takes no options of its own.
 | `--vortex-init {off,relocate}` | TC initial vortex: relocate = relocation and intensity correction toward TC vitals |
 | `--vortex-size-change-limit FRACTION` | largest RMW change of one relocation (default 0.15, the published per-cycle bound) |
 | `--vortex-vitals VITALS.json` | tc-vitals/1 document (rw_tc_vitals) holding the record at the initial time |
+| `--wait-for-cycle` | download routes only: wait for a cycle whose first hours are due more than 24 h from now; without it (or the config's [fetch] wait_for_cycle = true) such a cycle is refused with its date and the wait, since it is most often a typo |
 | `--warm-kernels` | _(accepted, but not listed by --help)_ |
 | `--waves {on,off}` | couple spectral ocean waves on the parent grid (default off) |
 | `--waves-options JSON` | wave source_pack, nf, nd, coarsening, interval_seconds, render_interval_seconds, roughness_feedback and stations |
@@ -964,6 +966,7 @@ Takes no options of its own.
 | `--transport {auto,aws,dwd,ecmwf,gdex,google,msc,ncei-0p5,ncei-1p0,nomads,s3}` | pin one rung of the source's endpoint ladder. Every NCEP source declares an ORDERED ladder -- the operational server (nomads.ncep.noaa.gov) while it still holds the cycle, the AWS archive behind it -- and the default walks it. Retention decides which rungs are asked: a cycle older than the operational window goes straight to the archive. Throughput decides which one serves: each requested object is HEADed on the archive first and taken there when the archive already has it, because the operational server's head start is spent once both hosts have the same bytes; an object the archive has not caught up with comes from the operational server. A refusal, a 403/503 or a Retry-After moves to the next rung either way. Where a source's ladder carries both hosts they serve byte-identical objects under identical keys, so the choice never changes the data, except for AI-GEFS: NOMADS marks each member with ensemble type 6 where the AWS copy of the same member says 3, the AWS surface files carry an extra surface pressure record, and the AWS pressure-level files are repacked copies whose heights sit within 0.08 gpm of the NOMADS ones. Preparation reads AI-GEFS from either host the same way and derives surface pressure itself on both. Naming a host here is a decision: it skips the probe, disables fall-through, and refuses in that host's own words. A host a source does not carry refuses and lists the ones it does, because for some products the second copy is a DIFFERENT product (see `gpuwm fetch --source aigfs`) |
 | `--validate GRIB` | era5 only: validate user-supplied GRIB1 file(s) against what gpuwm ingest expects instead of fetching |
 | `--wait-for` | the same as --as-posted, for every source |
+| `--wait-for-cycle` | wait for a cycle whose first hours are due more than 24 h from now; without it such a cycle is refused (exit 2) with its date and the wait, since it is most often a typo |
 | `--wait-timeout-minutes MIN` | a cap on the whole window, for every source: exit 75 if the window is not all in by then, keeping the fetched prefix |
 | `--whole-cycle` | the old rule: --cycle latest is the newest cycle whose final lead is posted, and a named cycle needs its final lead before anything moves |
 | `--wif` | stage the SHA-256-verified monthly aerosol climatology in its shared cache before forcing transfer; implied by the native forecast chain when its selected physics needs that dataset |
@@ -1172,6 +1175,7 @@ Takes no options of its own.
 | `--vortex-init {off,relocate}` | TC initial vortex: relocate = relocation and intensity correction toward TC vitals |
 | `--vortex-size-change-limit FRACTION` | largest RMW change of one relocation (default 0.15, the published per-cycle bound) |
 | `--vortex-vitals VITALS.json` | tc-vitals/1 document (rw_tc_vitals) holding the record at the initial time |
+| `--wait-for-cycle` | download routes only: wait for a cycle whose first hours are due more than 24 h from now; without it (or the config's [fetch] wait_for_cycle = true) such a cycle is refused with its date and the wait, since it is most often a typo |
 | `--warm-kernels` | _(accepted, but not listed by --help)_ |
 | `--waves {on,off}` | couple spectral ocean waves on the parent grid (default off) |
 | `--waves-options JSON` | wave source_pack, nf, nd, coarsening, interval_seconds, render_interval_seconds, roughness_feedback and stations |
@@ -1517,52 +1521,6 @@ Takes no options of its own.
 |---|---|
 | `--cache` | override GPUWM_KERNEL_CACHE |
 | `--sha256` | expected SHA256; defaults to PACK.sha256 |
-
-## `gpuwm local-da`
-
-| option | what it does |
-|---|---|
-| `--budget-seconds` | advisory wall-time target for preparation, forecast and cycles; does not reduce cycles or impose a runtime deadline |
-| `--cadence-seconds` | exact requested whole-second cadence; otherwise derived from scale; never shortened to meet a cost estimate |
-| `--capabilities` | print the companion command and field contract without pricing |
-| `--card-name` | label recorded beside the timing basis so a review names the card it was priced for |
-| `--continuous WINDOWS` | cycle continuously for WINDOWS analysis windows at the reviewed cadence: each window restarts from the previous analysis, assimilates, forecasts and renders, and the boundary forcing is renewed from the same source cycle when a window reaches past it; --status and --stop address the saved plan |
-| `--dry-run` | review only; no writes, downloads or device allocation |
-| `--epoch` | initial UTC timestamp on a whole-second boundary, including Z or an explicit offset |
-| `--explain` | print the full reasoning, alternate routes and per-item evidence behind this command's output, instead of the default one-line-per-item summary |
-| `--forcing-cadence-hours` | whole-hour source boundary spacing, separate from the whole-second analysis cadence |
-| `--forecast-seconds` | length of the forecast that follows the last analysis, in seconds |
-| `--free-gib` | free card memory in GiB when less than the whole card is available; defaults to the declared total |
-| `--host-gib` | declared host RAM in GiB for advisory comparison with estimated analysis arrays and observation tables |
-| `--json` | emit the review as one JSON document on stdout, which this door always does; accepted so a companion can state it |
-| `--launch` | launch or resume an existing local-da.json |
-| `--obs-table` | existing neutral observation table; repeatable |
-| `--out` | new directory to publish experiment.toml, ensemble.toml, experiment.namelist.wps, every other file the published configuration is read with on its own input route, and local-da.json into; refused if it exists |
-| `--point` | latitude,longitude |
-| `--prepared-config` | configuration authority consumed by the supplied prepared bundle |
-| `--prepared-namelist` | WPS authority consumed by the supplied prepared bundle |
-| `--prepared-root` | existing portable single-domain prepared bundle, verified by the ordinary forecast reader |
-| `--profile` | physics profile name resolved by the authoring authority; defaults to the profile that authority selects at the grid spacing of the selected rung |
-| `--radar-grid` | existing radar-grid observation file; repeatable |
-| `--region` | west,south,east,north; east<west crosses the dateline |
-| `--request-json` | arwen.local-da-request.v1 file, or - for stdin |
-| `--run` | launch after publishing the reviewed configuration |
-| `--satellite-grid` | existing cloud-water-path grid; repeatable |
-| `--scale` | requested rung of the derived ladder; its domain, resolution, members and cycle count are preserved, with lower rungs shown as alternatives |
-| `--score PLAN` | score every still-unscored nowcast lead of a saved plan now and exit: each completed window is graded against the MRMS composite nearest 15, 30, 45 and 60 minutes after its analysis, beside the radar-persistence baseline and the difference, and each window receipt is rewritten; a run scores its own leads by default, so this is for the leads whose valid time had not arrived when the run finished |
-| `--seed` | base seed for member perturbation and the static covariance samples; the same seed reproduces the same analysis |
-| `--source` | background source name resolved by its owner; defaults to the package background source |
-| `--source-cycle` | explicit source cycle in UTC; omitted selects one published cycle covering the entire window |
-| `--source-input` | ROLE=PATH for original source bytes needed to verify a supplied member identity; repeatable |
-| `--source-member` | one source member, separate from the regional ensemble member count |
-| `--source-product` | source product selector; source membership never changes the default product implicitly |
-| `--source-provider` | provider supported by the selected product owner |
-| `--source-root` | local source directory with the existing preparation handoff or native member inventory |
-| `--speed-factor` | compute speed relative to the printed reference card, not memory capacity |
-| `--status PLAN` | print the continuous status document of a saved plan with its controller liveness, and exit |
-| `--stop PLAN` | ask the running continuous controller of a saved plan to stop after its current operation; the request is durable, and a launch made while no controller runs clears it and resumes, so ask again after that launch to stop it |
-| `--supplement` | ROLE=PATH consumed by the preparation composition; repeatable |
-| `--vram-gib` | declared card memory in GiB; required unless a request document supplies the card |
 
 ## `gpuwm machines`
 
@@ -3547,12 +3505,12 @@ Takes no options of its own.
 |---|---|
 | `--append-to` | append station and radar rows to STATIONS.md and MRMS.md |
 | `--cycle` | UTC cycle, YYYY-MM-DDTHH[:MM:SS]Z |
-| `--domain` | _(the parser declares no help text for this option)_ |
+| `--domain N\|dNN` | on a run folder, score this domain only, by number or frame name (1 and d01 are the same; default: every domain); with packaged arms, the domain they belong to (default d01) |
 | `--explain` | print the full reasoning, alternate routes and per-item evidence behind this command's output, instead of the default one-line-per-item summary |
 | `--field-arm LABEL=TEMPLATE` | NPZ path template, for example LABEL=fields/run-f{hour:02d}.npz |
-| `--first-hour` | _(the parser declares no help text for this option)_ |
+| `--first-hour` | first forecast hour to score, counted from --cycle or, on a run folder without it, from the run's first frame (default: 1 for packaged arms, every finished hour of a run folder) |
 | `--grid` | native lat/lon NPZ for archived field arrays |
-| `--last-hour` | _(the parser declares no help text for this option)_ |
+| `--last-hour` | last forecast hour to score (default: 48 for packaged arms, every finished hour of a run folder) |
 | `--list-pending` | print the durable verification state without fetching |
 | `--manifest` | JSON list of native per-hour requests, or {hours: [...]} object |
 | `--point-arm LABEL=DIR` | _(the parser declares no help text for this option)_ |

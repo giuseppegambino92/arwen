@@ -1094,8 +1094,15 @@ FROZEN_MODULE_DIGESTS = {
         # Review: fork CASE(1) and its buoyancy flux now follow the fork.
         # The stock preprocessed source is unchanged, checked by the sibling test.
         # Wave3: export arm folded from sibling; default tokens unchanged.
-        '0a3cc76ddc7fbdfc9b59d8db1c1365746cc4fd649a1bd7b7ae30c6e455643ba0',
-        'cf6678981492e29c5d58e8c269f6cf247d5b00118cffa47e97d71014cd471342'),
+        # ML1 (fix/mynn-boulac-down-sign): the BouLac downward length's
+        # constant-theta branch takes NCAR/MYNN-EDMF 399f50f's sign under
+        # MYNN_BOULAC_DOWN_SIGN only (correct mode).  Without the define the
+        # PTX is byte-identical to rel/3.0.2 84f22b9076 at compute_89 and
+        # compute_120 under both loader option sets
+        # (tools/kernel_ptx_identity/receipts/mynn-boulac-down-sign-ml1-default.json).
+        # Previously 0a3cc76d/cf667898.
+        '17c4f8c5abb445b2213382c609bfa96ddae9d1c965b28d237b607d9b8b95c58c',
+        'ec6cc52fd9fd9456c8d0a0b16d00b6318b8381d4d9eb784bd96ca58976965455'),
     'mynn_surface': (
         # Re-pinned by the cat6 fix, 2026-11-02: 51bb93111ee (export hygiene)
         # rewrote comments only in glibc_flt32.cuh, flt32_expf_fma.cuh, kf.cu,
@@ -1260,8 +1267,14 @@ FROZEN_MODULE_DIGESTS = {
         # on its 24 x 3 oracle columns; the release short case (ICON-EU, two
         # domains, Noah, no sea ice) is byte-identical to integrate/2.9.0
         # 0bf505764 in all 21,885,246 history words.
-        'ef57884c3f55818b9f6cb920d2c5734f5b019967bf0deb917b944cb67df95094',
-        '42ed557f113efd6423279a881c3c0db362639180f8cf2dbdcf287c0ce3845331'),
+        #
+        # RE-PINNED by fix/305-f31-private-names (2026-11-15), a COMMENT-ONLY
+        # edit: one comment that named a lab host now names the card ("RTX
+        # 4090 test host").  No code token changed, so the compiled kernel is
+        # the same; only the file and compile-string digests move.
+        # Previously ef57884c/42ed557f.
+        'd9d199694c222ffc69aa6b7f53709480999dda8d661b03c5669a7fb9f96988ff',
+        'c1bd4ab2e64f06ac4ead990def78122ecfcd7d07d4097d3b956eca0fcbc8b1a3'),
     # fix/noahmp-small-defects (2026-11-09): correct-mode SN1, the Noah-MP
     # snowmelt reset re-evaluating ESTG at the reset TG, compiled only under
     # GPUWM_NOAHMP_MELT_RESET_ESAT.  Without it the arithmetic is unchanged

@@ -147,23 +147,32 @@ def _mynn_cfg(**overrides):
     return RunConfig(**values)
 
 
-def test_option_admission_names_what_it_would_break():
+def test_option_is_correct_mode_my1_and_inert_off_its_route():
+    """Since 3.0.3 the key is correct-mode finding MY1: on by default (off
+    in exact mode and in a strict process), read only by the wrf_461 MYNN
+    PBL, and inert elsewhere, where it used to be refused (a default-on key
+    must not refuse every non-MYNN run).  Breakage prevented: a default
+    MYNN run that deletes dew and frost, and an option that refuses runs it
+    never touches."""
+    from gpuwm import correct_mode
     from gpuwm.config import ConfigurationRefused, RunConfig, validate_run_config
+    from gpuwm.core.mynn_pbl_v61 import pbl_fixes_active, sfclay_fixes_active
 
     field = RunConfig.__dataclass_fields__["mynn_fixes_v61"]
-    assert field.kw_only and field.default is False
+    assert field.kw_only and field.default is correct_mode.CORRECT_KEYS_DEFAULT
+    assert correct_mode.FINDING_BY_KEY["mynn_fixes_v61"] == "MY1"
     validate_run_config(_mynn_cfg(mynn_fixes_v61=True))
-    with pytest.raises(ConfigurationRefused, match="true or false"):
+    with pytest.raises((ConfigurationRefused, ValueError), match="true or false|boolean"):
         validate_run_config(_mynn_cfg(mynn_fixes_v61=1))
-    with pytest.raises(ConfigurationRefused, match="gsd_41"):
-        validate_run_config(_mynn_cfg(mynn_fixes_v61=True,
-                                      bl_mynn_version="gsd_41"))
-    with pytest.raises(ConfigurationRefused, match="mynn_sfclay_variant"):
-        validate_run_config(_mynn_cfg(mynn_fixes_v61=True,
-                                      mynn_sfclay_variant="gsl_wrf39"))
-    with pytest.raises(ConfigurationRefused, match="never runs"):
-        validate_run_config(_mynn_cfg(mynn_fixes_v61=True, bl_pbl_physics=1,
-                                      sf_sfclay_physics=1))
+    for inert in (dict(bl_mynn_version="gsd_41"),
+                  dict(bl_pbl_physics=1, sf_sfclay_physics=1)):
+        cfg = _mynn_cfg(mynn_fixes_v61=True, **inert)
+        validate_run_config(cfg)
+        assert not pbl_fixes_active(cfg) and not sfclay_fixes_active(cfg)
+    other_sfc = _mynn_cfg(mynn_fixes_v61=True, mynn_sfclay_variant="gsl_wrf39")
+    validate_run_config(other_sfc)
+    assert pbl_fixes_active(other_sfc) and not sfclay_fixes_active(other_sfc)
+    assert not pbl_fixes_active(_mynn_cfg(mynn_fixes_v61=False))
 
 
 # --------------------------------------------------------------------------

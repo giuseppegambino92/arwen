@@ -2444,10 +2444,19 @@ def _posting_loop(source: str, cycle: datetime, args, *, leads,
     gap = readiness.layout_refusal(window, now=None)
     if gap is not None:
         raise ValueError(gap)
-    return fetch_as_posted.PostingLoop(
+    loop = fetch_as_posted.PostingLoop(
         window, args.out,
         late_after_minutes=getattr(args, "late_after_minutes", None),
         wait_timeout_minutes=getattr(args, "wait_timeout_minutes", None))
+    # A cycle whose start is days ahead is refused before any wait, naming
+    # its date (readiness.MAX_START_WAIT names the breakage).
+    if not getattr(args, "wait_for_cycle", False):
+        ahead = readiness.future_start_refusal(
+            source, cycle, readiness.start_due(loop.needs),
+            now=fetch_as_posted.now_utc())
+        if ahead is not None:
+            raise ValueError(ahead)
+    return loop
 
 
 def readiness_for_fetch(args, *, no_probe: bool | None = None,
@@ -9092,6 +9101,10 @@ FETCH_HINT_ROWS = key_rows(
            "how far past its scheduled time a lead may be before the run "
            "stops with exit 75; absent takes the source table's posting "
            "late_after_minutes"),
+    KeyRow("wait_for_cycle", "boolean", False,
+           "wait for a cycle whose first hours are due more than 24 h from "
+           "now (`gpuwm fetch --wait-for-cycle`); false refuses such a "
+           "cycle, naming its date, since it is most often a typo"),
     KeyRow("runtime_surface", "string", None,
            "comma-separated runtime surface fields (e.g. 'VEGFRA') the "
            "start must read from the cycle itself; absent, a field the "
@@ -9625,6 +9638,11 @@ def register_cli(subparsers) -> None:
         "--wait-timeout-minutes", type=float, default=None, metavar="MIN",
         help="a cap on the whole window, for every source: exit 75 if the "
              "window is not all in by then, keeping the fetched prefix")
+    parser.add_argument(
+        "--wait-for-cycle", action="store_true", dest="wait_for_cycle",
+        help="wait for a cycle whose first hours are due more than 24 h "
+             "from now; without it such a cycle is refused (exit 2) with "
+             "its date and the wait, since it is most often a typo")
     parser.add_argument(
         "--readiness", action="store_true",
         help="print gpuwm.readiness.v1 for this window on stdout and fetch "

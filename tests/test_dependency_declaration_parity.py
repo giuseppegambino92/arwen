@@ -592,16 +592,6 @@ _TEST_TREE_IMPORT_SITES: dict[str, tuple[str, ...]] = {
     # helpers so the timing runs on the inputs the suite certifies.
     # Checkout-only by the same construction as the two above.
     "tools/rrtmg_prep_device_check.py": ("test_rrtmg_legacy_prep_device",),
-    # The packed DA member-leg proof (69a8b88ad, 098816bc9): it binds the
-    # established public GPU fixture -- the cycle-join and nested-forecast
-    # suites' experiment, wiring, terrain and land builders -- and hashes
-    # those two suites' bytes as the proof's source identity, so the proof
-    # and the suites cannot drift apart.  Its GPU arms refuse without the
-    # node operator's OWNER check and one complete card UUID, and the import
-    # sits inside that guard (_fixture_imports).  Checkout-only by the same
-    # construction as the three above.
-    "tools/da_member_leg_proof.py": ("test_da_cycle_join_gpu",
-                                     "test_da_nested_forecast_gpu"),
     # These numerical review tools explicitly insert the checkout's tests
     # directory. Their fixture helpers are verified by the liveness gate
     # below and are not runtime dependencies of an installed distribution.
@@ -1146,7 +1136,7 @@ def test_the_shipped_surface_matches_the_packaging_declaration(pyproject):
         "configs/ now carries Python, so it is part of the shipped import "
         "surface; it was declared as a data directory only")
     assert any(p.as_posix().endswith("gpuwm/cli.py") for p in shipped)
-    assert any(p.as_posix().endswith("tools/da_nowcast.py") for p in shipped)
+    assert any(p.as_posix().endswith("tools/obs_radar_grid_build.py") for p in shipped)
     assert any(p.as_posix().endswith("tilestream/harness.py") for p in shipped)
     assert not any("ftz_receipt" in p.as_posix() for p in shipped), (
         "tools/ subpackages have no __init__ route into the wheel; the "

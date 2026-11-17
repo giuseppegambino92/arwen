@@ -530,6 +530,91 @@ def layout_refusal(window: Window, *, now: datetime | None) -> str | None:
         window.source, window.cycle, now=now, pinned=window.transport)
 
 
+#: The longest a run waits for its cycle's first hours before it is asked
+#: to.  A day covers the next cycle of every source with a posting row (a
+#: 12-hourly cycle plus its publication lag), which is the furthest ahead
+#: anyone sets a run up on purpose.
+#:
+#: THE BREAKAGE THIS PREVENTS (3.0.3 candidate check, 2026-11-15): a date
+#: typed five days ahead (``--cycle 2026-11-20T00`` on the 15th) was taken,
+#: and ``gpuwm go`` sat waiting four and a half days, its line naming only
+#: a clock time ("scheduled from about 03:30Z") and never the date.
+MAX_START_WAIT = timedelta(hours=24)
+
+#: The flag and the ``[fetch]`` key that ask a run to wait past
+#: :data:`MAX_START_WAIT` (``gpuwm go`` and ``gpuwm fetch`` both take it).
+WAIT_FOR_CYCLE_FLAG = "--wait-for-cycle"
+WAIT_FOR_CYCLE_KEY = "wait_for_cycle"
+
+
+def span_words(span: timedelta) -> str:
+    """A wait in words: ``4 d 12 h``, ``5 h 20 min``, ``40 min``."""
+
+    minutes = max(0, int(round(span.total_seconds() / 60.0)))
+    if minutes >= 24 * 60:
+        # Days are said to the nearest hour: 4 d 7 h 59 min is "4 d 8 h".
+        days, hours = divmod(int(round(minutes / 60.0)), 24)
+        return f"{days} d {hours} h"
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+    return f"{minutes} min"
+
+
+def when_words(moment: datetime, *, now: datetime) -> str:
+    """When a lead is due, said so a reader cannot take it for today.
+
+    ``03:30Z`` for a time today, ``2026-11-20 03:30Z`` for any other day,
+    and, for a time still ahead, how long that is from now
+    (``2026-11-20 03:30Z, in 4 d 12 h``).
+    """
+
+    moment, now = _naive(moment), _naive(now)
+    words = (f"{moment:%H:%M}Z" if moment.date() == now.date()
+             else f"{moment:%Y-%m-%d %H:%M}Z")
+    if moment > now:
+        words += f", in {span_words(moment - now)}"
+    return words
+
+
+def start_due(needs: Sequence[Need]) -> datetime | None:
+    """When the last of a window's start needs is due, or None."""
+
+    stamps = [need.expected_at for need in needs if need.expected_at is not None]
+    return max(stamps) if stamps else None
+
+
+def future_start_refusal(source: str, cycle: datetime, due: datetime | None, *,
+                         now: datetime) -> str | None:
+    """Why a run should not wait for a cycle whose start is far ahead, or None.
+
+    ``due`` is when the window's start needs are due (:func:`start_due`).
+    A wait of at most :data:`MAX_START_WAIT` is the ordinary as-posted
+    wait and is not refused; a longer one is, by naming the cycle's date,
+    when it starts and how long that is, because the likely cause is a
+    mistyped date.  The flag :data:`WAIT_FOR_CYCLE_FLAG` (or the
+    ``[fetch]`` key) waits anyway.
+    """
+
+    if due is None:
+        return None
+    cycle, due, now = _naive(cycle), _naive(due), _naive(now)
+    wait = due - now
+    if wait <= MAX_START_WAIT:
+        return None
+    limit = int(MAX_START_WAIT.total_seconds() // 3600)
+    ahead = (f" is {span_words(cycle - now)} in the future" if cycle > now
+             else " starts far ahead")
+    return (f"{source.upper()} cycle {cycle:%Y-%m-%dT%H}Z{ahead}: its first hours are due "
+            f"about {due:%Y-%m-%d %H:%M}Z, {span_words(wait)} from now "
+            f"({now:%Y-%m-%d %H:%M}Z), and a run waits at most {limit} h for "
+            "its cycle to start unless asked to.\n"
+            "  what to do: if the date is a typo, fix it (--cycle latest takes "
+            "the newest cycle that can start); to wait for this one, pass "
+            f"{WAIT_FOR_CYCLE_FLAG} (or write {WAIT_FOR_CYCLE_KEY} = true in "
+            "the config's [fetch] table).")
+
+
 def archive_hole_refusal(window: Window, answered, *,
                          now: datetime) -> str | None:
     """Why an archive's missing object will not appear by waiting, or None.

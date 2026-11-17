@@ -217,6 +217,32 @@ fn vorticity_scale_for_hemisphere(hemisphere: Hemisphere) -> DiscreteColorScale 
     }
 }
 
+/// Signed wind component (kt), symmetric about zero: dark green at
+/// `-max`, white across zero, dark red at `+max`.  Zero sits on a bin
+/// boundary so calm is the two palest bins, never a coloured one.
+fn wind_component_scale((max_kt, step_kt): (f64, f64)) -> DiscreteColorScale {
+    let levels = range_step(-max_kt, max_kt + step_kt * 0.5, step_kt);
+    let bins = levels.len().saturating_sub(1).max(1);
+    let lerp = |a: u8, b: u8, t: f64| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+    let colors = (0..bins)
+        .map(|i| {
+            let centre = (levels[i] + levels[(i + 1).min(levels.len() - 1)]) * 0.5;
+            let t = (centre.abs() / max_kt).clamp(0.0, 1.0);
+            if centre < 0.0 {
+                Color::rgba(lerp(240, 0, t), lerp(250, 90, t), lerp(240, 30, t), 255)
+            } else {
+                Color::rgba(lerp(252, 120, t), lerp(240, 0, t), lerp(240, 10, t), 255)
+            }
+        })
+        .collect();
+    DiscreteColorScale {
+        levels,
+        colors,
+        extend: ExtendMode::Both,
+        mask_below: None,
+    }
+}
+
 pub fn operational_fill_scale_for_recipe(
     recipe: &PlotRecipe,
     filled_selector: FieldSelector,
@@ -408,6 +434,12 @@ pub fn operational_fill_scale_for_recipe_in(
             mask_below: Some(0.0),
         },
         RenderStyle::WeatherTerrain => terrain_elevation_scale(),
+        RenderStyle::WeatherWindComponent => wind_component_scale(match filled_selector.vertical {
+            VerticalSelector::IsobaricHpa(level) if level <= 300 => (120.0, 10.0),
+            VerticalSelector::IsobaricHpa(level) if level <= 500 => (90.0, 10.0),
+            VerticalSelector::IsobaricHpa(_) => (60.0, 5.0),
+            _ => (40.0, 4.0),
+        }),
         RenderStyle::WeatherIsothermHeight => isotherm_height_scale(),
         RenderStyle::WeatherSupercooledWaterPath => supercooled_water_path_scale(),
         RenderStyle::WeatherHydrometeorMixingRatio => hydrometeor_mixing_ratio_scale(),

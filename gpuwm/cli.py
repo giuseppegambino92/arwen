@@ -729,8 +729,6 @@ def build_parser(*, render_only: bool = False, preset_only: bool = False,
     tc_tracks_register_cli(sub)
     _lazy_register("gpuwm.tc_verify")(sub)
     tc_strata_register_cli(sub)
-    local_da_register_cli = _lazy_register("gpuwm.local_da")
-    local_da_register_cli(sub)
     research_register_cli = _lazy_register("gpuwm.research_workspaces")
     research_register_cli(sub)
     case_catalog_register_cli = _lazy_register("gpuwm.case_catalog")
@@ -1027,6 +1025,11 @@ def main(argv: list[str] | None = None) -> int:
         check_argv(tokens)
     except ValueError as error:
         print(f"gpuwm: {error}", file=sys.stderr)
+        return 2
+    from gpuwm.removed_commands import removed_command
+    removed = removed_command(tokens)
+    if removed is not None:
+        print(removed, file=sys.stderr)
         return 2
     from gpuwm.verification_visuals import verification_scope
     # None: `gpuwm run --no-verify-visuals` sets the variable for its routes

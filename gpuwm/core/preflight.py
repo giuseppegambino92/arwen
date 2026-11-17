@@ -1974,7 +1974,9 @@ def non_pool_basis(profile: "DeviceLocalMemoryProfile",
                 _noahmp_pricing_profile(exp, profile),
                 snow_papers=any(dc.run.sf_surface_physics == 4 and dc.run.opt_alb == 3
                                 for dc in exp.domains),
-                snow_layers=_snow_layers_selected(exp))
+                snow_layers=_snow_layers_selected(exp),
+            snow_lap=any(dc.run.sf_surface_physics == 4 and dc.run.opt_alb == 3
+                         and dc.run.snicar_lap_opt for dc in exp.domains))
             sentence = f"{sentence}; {selected_basis}"
     if exp is not None:
         # A module with no reading anywhere is priced, not refused, and
@@ -4486,7 +4488,9 @@ def kernel_local_frame_bytes(
             _noahmp_pricing_profile(exp, profile),
             snow_papers=any(dc.run.sf_surface_physics == 4 and dc.run.opt_alb == 3
                             for dc in exp.domains),
-            snow_layers=_snow_layers_selected(exp))
+            snow_layers=_snow_layers_selected(exp),
+            snow_lap=any(dc.run.sf_surface_physics == 4 and dc.run.opt_alb == 3
+                         and dc.run.snicar_lap_opt for dc in exp.domains))
         for key, frame in extra.items():
             frames[key] = max(frames.get(key, 0), frame)
     if "noahmp_gecros" in modules:
@@ -9885,6 +9889,8 @@ def noahmp_lsm_transient_shapes(cfg: RunConfig) -> dict[str, tuple[int, ...]]:
         # Glacier's full-grid f32[n,56] pack, i32 IST, zero impurity,
         # f32[n,6] result and temporary operands. Land uses chunk rows.
         selected["noahmp_lsm/snow_papers_transients"] = (columns, 1024)
+        from gpuwm.core.snicar_memory import option_transient_shapes
+        selected.update(option_transient_shapes(cfg))
     return {
         **selected,
         "noahmp_lsm/slab_chunk_transients":
@@ -9915,7 +9921,9 @@ def noahmp_lsm_cache_shapes(cfg: RunConfig) -> dict[str, tuple[int, ...]]:
         device_route, parameter_bytes_per_row)
 
     if device_route(cfg):
+        from gpuwm.core.snicar_memory import option_cache_shapes
         return {
+            **option_cache_shapes(cfg),
             **({"noahmp_lsm/snow_papers_optics": (283703, 4)}
                if cfg.opt_alb == 3 else {}),
             "noahmp_lsm/device_parameter_pool":

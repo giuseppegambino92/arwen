@@ -16,6 +16,7 @@ heavy at module scope.
 * A per-scheme key written beside it still wins, as ``bl_mynn_version``
   does today.
 * Omitted, the engine runs its defaults: the newest generation of every
+  scheme (decided 2026-11-08: defaults are the latest upstream versions,
   pins are for bitwise proof).  ``"4.8.0"`` pins the schemes WRF 4.8.0
   itself ships, ``"4.7.1"`` the ones WRF 4.7.1 ships.  Which generation
   each release runs is the importer's release table

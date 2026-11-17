@@ -153,7 +153,7 @@ def test_history_selection_never_substitutes_an_arbitrary_tip(monkeypatch, avail
 
 
 def test_vendor_policy_does_not_hide_the_same_token_in_authored_code():
-    token = "".join(("wx", "mod"))
+    token = scan._NAME
     diff = ("+++ b/tools/rustwx/vendor/crates-io/example/lib.rs\n+" + token + "\n"
             "+++ b/gpuwm/new_module.py\n+" + token + "\n")
     offenders = scan._diff_offenders(diff)

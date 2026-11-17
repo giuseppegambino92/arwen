@@ -407,7 +407,7 @@ def arm_lead_classes(root: Path, case: planmod.Case, arm: planmod.Arm) -> list[s
 
 def score_case(root: Path, case: planmod.Case, plan: str, arm_ids: Sequence[str] | None,
                stations_on: bool, radar_on: bool, commit: str) -> dict:
-    from gpuwm.local_da_score import CachedCompositeSource
+    from gpuwm.verify.obs.nowcast import CachedCompositeSource
     from gpuwm.obs.mrms_fetch import MrmsCompositeCache
     from gpuwm.verify.obs import registration as reg
 

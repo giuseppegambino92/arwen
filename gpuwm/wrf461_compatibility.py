@@ -74,7 +74,10 @@ class WRFCompatibilityCell:
 # verdict count by 10/6 and the pinned counts in
 # tests/test_wrf461_compatibility.py were re-measured off the enlarged
 # matrix rather than projected.
-MP_OPTIONS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 18, 24, 26, 28, 30, 38, 40, 50, 51, 52, 53, 55, 56, 95, 97, 106)
+# 96 (MAD-WRF) joined in 3.0.3 on its Registry package line, which
+# _MP_CITATION already carried (Registry.EM_COMMON:3047); 27 (UDM) and 29
+# (RCON) have no WRF v4.6.1 package and are declared in AXIS_EXCLUSIONS.
+MP_OPTIONS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 18, 24, 26, 28, 30, 38, 40, 50, 51, 52, 53, 55, 56, 95, 96, 97, 106)
 # 11 (Shin-Hong) joined the PBL axis with the Shin-Hong port: an implemented
 # scheme with a certified oracle (max ULP 0 CPU authority against the
 # byte-frozen WRF v4.6.1 module_bl_shinhong.F,
@@ -154,6 +157,27 @@ CUMULUS_OPTIONS = (0, 1, 2, 3, 5, 6, 10, 11, 14, 16, 93, 94, 95, 96, 99)
 #: mistaking absence for illegality.
 AXIS_EXCLUSIONS = MappingProxyType({
     ("cu_physics", 7): "CAM ZM requires MYJ/Eta or CAM UW at get_tpert; those PBL choices are outside this physics_init matrix.",
+    ("mp_physics", 27): (
+        "UDM is ported from WRF v4.7.1 (module_mp_udm.F); WRF v4.6.1's "
+        "Registry.EM_COMMON binds no package at mp_physics=27, so there is "
+        "no v4.6.1 verdict to transcribe. The microphysics axis takes no "
+        "part in a cell's verdict, and UDM's own pairings are its registry "
+        "option's constraints."),
+    ("mp_physics", 29): (
+        "RCON is ported from WRF v4.7.1; WRF v4.6.1's Registry.EM_COMMON "
+        "binds no package at mp_physics=29, so there is no v4.6.1 verdict "
+        "to transcribe. The microphysics axis takes no part in a cell's "
+        "verdict, and RCON's own pairings are its registry option's "
+        "constraints."),
+    ("sf_sfclay_physics", 89): (
+        "The ideal SCM surface layer (Registry.EM_COMMON:3136, "
+        "idealscmsfcscheme) is the one surface layer WRF v4.6.1 assigns no "
+        "isfc for (module_physics_init.F:3140-3220; isfc is an "
+        "uninitialized local at :2768), so every PBL's isfc law has no "
+        "defined verdict over it. The one cell WRF does define, PBL off, "
+        "is transcribed as (0, 89) in PBL_SURFACE_LAYER_AUTHORITY, and the "
+        "registry's ideal-scm option admits only that pairing (pbl off, "
+        "land surface off)."),
     ("mp_physics", 900): (
         "TEMPO is a WOOF named scheme (gpuwm.microphysics_schemes, id 900, "
         "outside WRF's mp_physics range): WRF v4.6.1 has no TEMPO option, so "

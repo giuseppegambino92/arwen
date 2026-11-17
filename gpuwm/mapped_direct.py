@@ -1266,7 +1266,8 @@ class _PostedMappedSource:
             position = self.leads.index(lead)
             if (recorded != trajectory
                     or _naive_time(marker["valid_time"]) != self.valid_times[position]
-                    or self.valid_times[position] != _naive_time(cycle) + timedelta(hours=lead)):
+                    or self.valid_times[position] != _naive_time(cycle) + timedelta(
+                        minutes=lead * int(self.schedule.get("lead_minutes", 60)))):
                 raise ValueError("mapped physical lead differs from its posted source trajectory")
         return trajectory
 

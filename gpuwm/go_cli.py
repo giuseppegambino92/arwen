@@ -501,7 +501,8 @@ def plan_from_config(config: Path, *, outdir: Path | None = None,
                      transport: str | None = None,
                      devices: int | None = None,
                      as_posted: bool | None = None,
-                     late_after_minutes: float | None = None) -> dict:
+                     late_after_minutes: float | None = None,
+                     wait_for_cycle: bool = False) -> dict:
     """Everything the five stages need, or a refusal saying why not.
 
     ``transport`` is ``gpuwm go --transport``: it wins over the config's
@@ -893,6 +894,10 @@ def plan_from_config(config: Path, *, outdir: Path | None = None,
                      else fetch_table.get("as_posted")) is False
             else late_after_minutes if late_after_minutes is not None
             else fetch_table.get("late_after_minutes")),
+        # Wait for a cycle whose start is more than a day ahead
+        # (source_readiness.MAX_START_WAIT): the flag or the table.
+        "wait_for_cycle": bool(wait_for_cycle
+                               or fetch_table.get("wait_for_cycle")),
         # The runtime surface fields this config requires from the cycle
         # itself; None leaves every table-declared field on its fallback
         # rule (recorded) when a cycle publishes no record for it.
@@ -1210,6 +1215,8 @@ def fetch_command(plan: dict) -> list[str]:
     if plan.get("late_after_minutes") is not None:
         command.extend(("--late-after-minutes",
                         f"{float(plan['late_after_minutes']):g}"))
+    if plan.get("wait_for_cycle"):
+        command.append("--wait-for-cycle")
     if plan.get("runtime_surface"):
         command.extend(("--runtime-surface", str(plan["runtime_surface"])))
     if plan.get("wif_domains"):
@@ -2850,6 +2857,45 @@ def _progress_note(progress: Path | None) -> str:
     return (", " + ", ".join(parts)) if parts else ""
 
 
+def _utc_now():
+    """go's clock (naive UTC); a test puts its own here."""
+
+    from gpuwm.source_readiness import _utc_now as now
+
+    return now()
+
+
+def future_cycle_refusal(plan: dict, *, now=None) -> str | None:
+    """Why this run should not wait for its cycle to start, or None.
+
+    The fetch stage refuses the same cycle (``gpuwm fetch`` without
+    ``--wait-for-cycle``, :func:`gpuwm.source_readiness.future_start_refusal`
+    names the breakage); asked here first so ``gpuwm go`` says it before a
+    stage starts, and a dry run can print it.  Only a source the run waits
+    on as it posts is asked: an archive or a whole-cycle fetch waits for
+    nothing.
+    """
+
+    from datetime import datetime as _datetime
+
+    from gpuwm import fetch, source_posting, source_readiness
+
+    if plan.get("wait_for_cycle") or plan.get("as_posted") is False:
+        return None
+    source = str(plan.get("source") or "")
+    try:
+        cycle = _datetime.strptime(str(plan.get("cycle") or "")[:13], "%Y-%m-%dT%H")
+        if not (fetch.cycle_is_probeable(source)
+                and source_posting.posting(source).waited):
+            return None
+        due = source_posting.expected_at(
+            source, cycle, int(plan.get("forecast_start_hour") or 0))
+    except (ValueError, KeyError, TypeError):
+        return None
+    return source_readiness.future_start_refusal(
+        source, cycle, due, now=_utc_now() if now is None else now)
+
+
 def _posting_note(schedule: dict) -> str:
     """The fetch's beat line as posted: leads in, and the lead it waits for.
 
@@ -2870,6 +2916,18 @@ def _posting_note(schedule: dict) -> str:
         expected = str(waiting.get("expected_at") or "")
         when = (f" (scheduled from about {expected[11:16]}Z)"
                 if len(expected) >= 16 else "")
+        from gpuwm import source_readiness
+        try:
+            due = source_readiness.parse_instant(expected or None)
+        except ValueError:
+            due = None
+        now = _utc_now()
+        if due is not None and due > now:
+            # A lead still ahead says its date when it is not today, and
+            # how long that is: the 3.0.3 check's run typed a date five days
+            # ahead and read "scheduled from about 03:30Z" for ten minutes.
+            when = (" (scheduled from about "
+                    f"{source_readiness.when_words(due, now=now)})")
         note += (f", waiting for {schedule.get('source')} "
                  f"f{int(waiting.get('lead', 0)):03d}, not posted yet{when}")
     return note
@@ -6667,6 +6725,18 @@ def _archive_dry_readiness(args, payload: dict, cycle) -> int | None:
     if (not fetch_endpoints.archive_rows(str(table.get("source", "")))
             or not requested or requested == "latest"):
         return None
+    # A dated dry run answers with the readiness document (exit 75 while
+    # the window is not yet up), whose retry_after_seconds alone did not
+    # say that the run itself refuses a start days ahead.
+    ahead = future_cycle_refusal({
+        "source": table.get("source"), "cycle": requested,
+        "forecast_start_hour": table.get("forecast_start_hour"),
+        "as_posted": (False if getattr(args, "whole_cycle", False)
+                      else table.get("as_posted")),
+        "wait_for_cycle": bool(getattr(args, "wait_for_cycle", False)
+                               or table.get("wait_for_cycle"))})
+    if ahead is not None:
+        print(f"go: WARNING -- the run would refuse: {ahead}", file=sys.stderr)
     probe_payload = {**payload, "fetch": {**table, "cycle": requested}}
     pinned, _ = pinned_transport(table, getattr(args, "transport", None))
     document, code = _readiness_answer(
@@ -7098,7 +7168,9 @@ def _go_prepared_main(args, *, observer=None) -> int:
                             as_posted=(False if getattr(args, "whole_cycle", False)
                                        else None),
                             late_after_minutes=getattr(
-                                args, "late_after_minutes", None))
+                                args, "late_after_minutes", None),
+                            wait_for_cycle=bool(getattr(
+                                args, "wait_for_cycle", False)))
     plan["publish_root"] = Path(getattr(args, "publish_root", None) or Path(plan["root"]) / "www")
     plan["publish_cmd"] = getattr(args, "publish_cmd", None)
     plan["hydro"] = getattr(args, "hydro", None) or "auto"
@@ -7124,11 +7196,14 @@ def _go_prepared_main(args, *, observer=None) -> int:
     # path again after the claim below.
     manifest = front_door_manifest(plan)
     cycle_stamp = _cycle_stamp(plan["cycle"])
+    ahead = future_cycle_refusal(plan)
 
     if getattr(args, "dry_run", False):
         print(f"go: {plan['config']} -- source {plan['source']}, cycle "
               f"{plan['cycle']}, {plan['hours']} h of forcing, "
               f"{_physics_words(plan)}{_lead_note(plan)}")
+        if ahead is not None:
+            print(f"go: WARNING -- the run would refuse: {ahead}", file=sys.stderr)
         for line in _ocean_plan_lines(plan):
             print(line)
         print(_run_folder_note(plan))
@@ -7250,6 +7325,9 @@ def _go_prepared_main(args, *, observer=None) -> int:
                f"{plan['case_root']}, or pass --outdir <a new "
                "directory>\n")
             + f"  # or remove {plan['root']} if that run is finished with")
+
+    if ahead is not None:
+        raise GoRefusal(ahead)
 
     # plan['hours'] is the [fetch] window (forcing coverage), not the run
     # length: a 1 h run on 3-hourly GFS boundaries fetches 3 h and the line
@@ -8030,6 +8108,14 @@ def _add_go_arguments(parser) -> None:
                              "time a lead may be before the run stops with exit "
                              "75; wins over the config's [fetch] "
                              "late_after_minutes and the source row's budget")
+    parser.add_argument("--wait-for-cycle", action="store_true",
+                        dest="wait_for_cycle",
+                        help="download routes only: wait for a cycle whose "
+                             "first hours are due more than 24 h from now; "
+                             "without it (or the config's [fetch] "
+                             "wait_for_cycle = true) such a cycle is refused "
+                             "with its date and the wait, since it is most "
+                             "often a typo")
     parser.add_argument("--readiness", action="store_true",
                         help="print gpuwm.readiness.v1 for the config's fetch "
                              "window on stdout and run nothing: exit 0 ready, "

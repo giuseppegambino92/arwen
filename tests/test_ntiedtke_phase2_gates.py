@@ -408,16 +408,17 @@ def test_the_prepared_cache_identity_needs_no_scheme_entry():
     from gpuwm.wind_table import drop_inert_config
     drop_inert_config(expected_run)
     # 3.0.0: the WRF 4.8.0 keys whose scheme is off (dynamic lightning,
-    # gwd_opt = 1, Shin-Hong, the MYNN-SFC roughness keys), the MYNN v6.1
-    # switch and the TEMPO generation leave the identity, by the document's
-    # rule (gpuwm.experiment).
+    # gwd_opt = 1, Shin-Hong, the MYNN-SFC roughness keys) and the TEMPO
+    # generation leave the identity, by the document's rule
+    # (gpuwm.experiment).  The MYNN v6.1 switch is correct-mode MY1 since
+    # 3.0.3 and leaves with the correction keys below.
     from gpuwm.core.dyn_lightning import drop_default_dyn_lightning
     drop_default_dyn_lightning(expected_run)
     for name in ("gwdo_version", "gwd_dx_factor", "gwd_if_nonhyd",
                  "shinhong_version", "shinhong_nonlocal_flux",
                  "shinhong_scu_mixing", "shinhong_ke_dissipation",
                  "sf_mynn_sfcflux_land", "sf_mynn_sfcflux_water", "shalwater_z0",
-                 "mynn_fixes_v61", "tempo_version", "tempo_hailhyperaware"):
+                 "tempo_version", "tempo_hailhyperaware"):
         expected_run.pop(name)
 
     neutral = {"surface_energy_diag": False, "cycling": False,

@@ -1312,6 +1312,13 @@ cover carries terms of its own:
     Zenodo, unmodified, and maps its classes into WRF's MODIS categories
     at preparation time.
 
+  * gpuwm/data/geog_repairs/gmted2010_e180_glo30.npz (the terrain of land
+    east of 180 degrees that the WPS GMTED2010 tiles store as 0 m) carries
+    heights averaged from the Copernicus DEM GLO-30: produced using
+    Copernicus WorldDEM-30 (c) DLR e.V. 2010-2014 and (c) Airbus Defence
+    and Space GmbH 2014-2018 provided under COPERNICUS by the European
+    Union and ESA; all rights reserved.
+
 
 --------------------------------------------------------------------------
 

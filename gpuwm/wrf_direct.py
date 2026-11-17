@@ -997,17 +997,11 @@ def write_domain_artifacts_manifest(
 
 
 def _interp_nodes(nodes: np.ndarray) -> np.ndarray:
-    output = []
-    for depth in _NOAH_LAYER_MIDPOINTS_M:
-        lower = int(np.searchsorted(_HRRR_SOIL_NODE_DEPTHS_M, depth) - 1)
-        weight = (
-            (depth - _HRRR_SOIL_NODE_DEPTHS_M[lower])
-            / (_HRRR_SOIL_NODE_DEPTHS_M[lower + 1]
-               - _HRRR_SOIL_NODE_DEPTHS_M[lower])
-        )
-        output.append(
-            nodes[lower] + weight * (nodes[lower + 1] - nodes[lower]))
-    return np.stack(output)
+    # One soil blend for every start route: real.exe's float32 order.
+    from gpuwm.ingest.soil import _interp_nodes as wrf_soil_blend
+
+    return wrf_soil_blend(nodes, _HRRR_SOIL_NODE_DEPTHS_M,
+                          _NOAH_LAYER_MIDPOINTS_M)
 
 
 def _wrf_noah_landuse(raw_lu: np.ndarray, *, iswater: int = 17,

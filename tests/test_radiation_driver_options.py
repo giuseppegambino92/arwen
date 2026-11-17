@@ -183,6 +183,10 @@ def test_the_checkpoint_echo_drops_both_at_their_default():
         "hydrometeor_handover_numbers",
         # SN1 (fix/noahmp-small-defects): the Noah-MP snowmelt-reset key.
         "noahmp_melt_reset_esat",
+        # 3.0.3: ML1, the MYNN BouLac downward length sign key.
+        "mynn_boulac_down_sign",
+        # 3.0.3: ML1's second key, the BouLac and k-epsilon PBL length sign.
+        "pbl_boulac_down_sign",
         # 2.9.1: WRF's ocean mixed layer, appended after the correct-mode keys.
         "sf_ocean_physics",
         # development branch: the keyword-only 3-D PWP controls.

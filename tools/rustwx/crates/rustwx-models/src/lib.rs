@@ -116,6 +116,10 @@ pub enum RenderStyle {
     /// for orography would produce a plot of the wind over a field that
     /// does not vary.
     WeatherTerrain,
+    /// One signed wind component (u or v) in knots on a green/red
+    /// diverging scale centred on zero: green negative (easterly u,
+    /// northerly v), red positive (westerly u, southerly v).
+    WeatherWindComponent,
     /// The height of an isotherm in metres, on a sequential ramp whose
     /// cold end is a low level.
     WeatherIsothermHeight,
@@ -5915,6 +5919,82 @@ const PLOT_RECIPES: &[PlotRecipe] = &[
         barbs_u: Some(FIELD_10M_U),
         barbs_v: Some(FIELD_10M_V),
         style: RenderStyle::WeatherWinds,
+    },
+    // Signed wind components (kt) on the green/red diverging scale, with
+    // the full wind as barbs: the shear and turning a forecaster reads for
+    // rotating storms.  Earth-relative: the WRF import stores
+    // uvmet/uvmet10 (rotated) under these selectors, never grid ua/va.
+    PlotRecipe {
+        slug: "10m_u_wind",
+        title: "10m AGL U Wind Component",
+        filled: FIELD_10M_U,
+        contours: None,
+        barbs_u: Some(FIELD_10M_U),
+        barbs_v: Some(FIELD_10M_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "10m_v_wind",
+        title: "10m AGL V Wind Component",
+        filled: FIELD_10M_V,
+        contours: None,
+        barbs_u: Some(FIELD_10M_U),
+        barbs_v: Some(FIELD_10M_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "850mb_u_wind",
+        title: "850mb U Wind Component",
+        filled: FIELD_850_U,
+        contours: None,
+        barbs_u: Some(FIELD_850_U),
+        barbs_v: Some(FIELD_850_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "850mb_v_wind",
+        title: "850mb V Wind Component",
+        filled: FIELD_850_V,
+        contours: None,
+        barbs_u: Some(FIELD_850_U),
+        barbs_v: Some(FIELD_850_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "700mb_u_wind",
+        title: "700mb U Wind Component",
+        filled: FIELD_700_U,
+        contours: None,
+        barbs_u: Some(FIELD_700_U),
+        barbs_v: Some(FIELD_700_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "700mb_v_wind",
+        title: "700mb V Wind Component",
+        filled: FIELD_700_V,
+        contours: None,
+        barbs_u: Some(FIELD_700_U),
+        barbs_v: Some(FIELD_700_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "500mb_u_wind",
+        title: "500mb U Wind Component",
+        filled: FIELD_500_U,
+        contours: None,
+        barbs_u: Some(FIELD_500_U),
+        barbs_v: Some(FIELD_500_V),
+        style: RenderStyle::WeatherWindComponent,
+    },
+    PlotRecipe {
+        slug: "500mb_v_wind",
+        title: "500mb V Wind Component",
+        filled: FIELD_500_V,
+        contours: None,
+        barbs_u: Some(FIELD_500_U),
+        barbs_v: Some(FIELD_500_V),
+        style: RenderStyle::WeatherWindComponent,
     },
     PlotRecipe {
         slug: "10m_wind_gusts",

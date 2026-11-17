@@ -111,7 +111,9 @@ from gpuwm.core.mynn_sfclay import (
     launch_mynn_surface_layer,
     seed_mynn_surface_first_step,
 )
-from gpuwm.core.mynn_pbl_v61 import mynn_sfclay_cold_start
+from gpuwm.core.mynn_pbl_v61 import (mynn_sfclay_cold_start,
+                                     pbl_fixes_active as _mynn_v61_pbl,
+                                     sfclay_fixes_active as _mynn_v61_sfclay)
 from gpuwm.core.noahmp_runtime import (
     NOAHMP_DIAGNOSTICS_2D,
     NOAHMP_STATE_2D,
@@ -4159,7 +4161,7 @@ class PhysicsDriver:
                     ice_component, diagnosed_ice, f["tsk"]).astype(DTYPE)
             if itimestep == 1 and not mynn_sfclay_cold_start(
                     itimestep, cycling=cfg.cycling,
-                    fixes_v61=cfg.mynn_fixes_v61):
+                    fixes_v61=_mynn_v61_sfclay(cfg)):
                 # mynn_fixes_v61 S1 (NCAR/MYNN-SFC f0c1839): a cycled start
                 # keeps the input's UST/MOL/QSFC; qstar is still zeroed on
                 # step 1, as MYNN-SFC v6.1.0's driver does.
@@ -5837,9 +5839,17 @@ class PhysicsDriver:
             icloud_bl=cfg.icloud_bl,
             **({"tke_budget": cfg.tke_budget} if cfg.tke_budget else {}),
             **({"cycling": True} if cfg.cycling else {}),
-            # Upstream MYNN v6.1 fixes (gpuwm/core/mynn_pbl_v61.py), passed
-            # only when selected, so a default run's options are unchanged.
-            **({"mynn_fixes_v61": True} if cfg.mynn_fixes_v61 else {}),
+            # Upstream MYNN v6.1 fixes (gpuwm/core/mynn_pbl_v61.py; correct-
+            # mode MY1, on by default), passed only where they run (the
+            # wrf_461 generation), so the other generations' options and an
+            # exact run's are unchanged.
+            **({"mynn_fixes_v61": True} if _mynn_v61_pbl(cfg) else {}),
+            # Correct-mode ML1 (gpuwm/correct_mode.py), passed only when on
+            # and read (the wrf_461 and gsd_41 length kernels), so an exact
+            # run's options are unchanged.
+            **({"mynn_boulac_down_sign": True}
+               if (cfg.mynn_boulac_down_sign
+                   and cfg.bl_mynn_version in ("wrf_461", "gsd_41")) else {}),
             # Passed only off their defaults, so a wrf_461 run hands the
             # driver exactly the options it was handed before the selector.
             **({"bl_mynn_version": cfg.bl_mynn_version,
@@ -6306,7 +6316,10 @@ class PhysicsDriver:
         outputs["pblh"] = f["pblh"]
         out = launch_boulac(
             columns, surface, f["tke_pbl"], dt=float(cfg.dt),
-            cp_air=float(c.CP), g=float(c.G), outputs=outputs, **urban)
+            cp_air=float(c.CP), g=float(c.G), outputs=outputs, **urban,
+            # Correct-mode ML1 (gpuwm/correct_mode.py), passed only when on,
+            # so an exact run's call is unchanged.
+            **({"down_sign": True} if cfg.pbl_boulac_down_sign else {}))
         f["kpbl"][...] = pbl_top_from_height(atmosphere["dz"], f["pblh"])
         self.pbl_tendencies = self._couple_pbl_slot(
             cfg, out, atmosphere=atmosphere)
@@ -6676,7 +6689,9 @@ class PhysicsDriver:
         carried = {wrf: f[name] for name, wrf in KEPS_FIELDS.items()}
         carried["pblh"] = f["pblh"]
         out = keps_step(inputs, carried, dt=float(cfg.dt),
-                        itimestep=itimestep)
+                        itimestep=itimestep,
+                        # Correct-mode ML1, passed only when on.
+                        **({"down_sign": True} if cfg.pbl_boulac_down_sign else {}))
         f["exch_h"][...] = out["exch_h"]
         f["exch_m"][...] = out["exch_m"]
         for name in ("wu_tur", "wv_tur", "wt_tur"):

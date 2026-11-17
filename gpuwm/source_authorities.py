@@ -249,13 +249,15 @@ _PACKAGED_PROFILES = MappingProxyType({
     ),
     # A gpuwm-hex run as an ArWen parent: the export door's frames on a
     # regular lat-lon window (region-latlon: or global-mesh), decoded on
-    # the 55 MPAS model levels.  Terrain is in band (HGT in every frame).
+    # the parent's own MPAS model levels, as many as the frame carries (55
+    # on the default suites, 59 on hrrrv5).  Terrain is in band (HGT in
+    # every frame).
     "hex-history-netcdf-v1": _profile(
         "rw-wps-hex-history-netcdf",
         source_format="netcdf",
-        mapping="e992c19fd9957ca050e8038e65033b1b886857a3ce80e47448515e67e081279a",
+        mapping="12eb1754e6a40bae1352850ddd36528c0ade3919f29e4afd98be88c4060f93c6",
         composition="bbd2c5b52f13ee8f1ebfac8a138fd109ae883877d5d6fee3a5684172bec8d875",
-        provenance="cd38d89e487695716cea9298be4ecb1f2ec0a93b96955ce1b0ac34a1ba195890",
+        provenance="701358a08bbbefaf991af412431da9c2984123fa7d155ffbc1c661c34746aec9",
         data_role="hex_in_band_surface",
         provenance_role="hex_in_band_surface_provenance",
     ),
@@ -267,9 +269,9 @@ _PACKAGED_PROFILES = MappingProxyType({
     "hex-history-ruc9-netcdf-v1": _profile(
         "rw-wps-hex-history-ruc9-netcdf",
         source_format="netcdf",
-        mapping="d5a453023d39792bde202a4846007eea4d6a3e43fa8828f164bc9be3e8418718",
+        mapping="1b337391df6ea4f1044a39feba74bdbd469317cba2adb7d808364dc140c4bda6",
         composition="4c8bdf3c1825d3822ce95728a475271d0b8efe07af6562f9112b5b4113e1799a",
-        provenance="689f2c581aff579f970043d7e428ddeb297303119fb45900b28cafb46ef70ff6",
+        provenance="5c6a57df515684126fc4957ca783db1ed3a936693336aeda347dbab2e5817942",
         data_role="hex_in_band_surface",
         provenance_role="hex_in_band_surface_provenance",
     ),
@@ -937,12 +939,17 @@ _PACKAGED_PROFILES = MappingProxyType({
     # zero everywhere.
     # Proven on real 2026-05-30 CDS bytes: both
     # engines byte-identical on air_pressure and geopotential_height
-    # (max ULP 0) and a preparation to rc 0.
+    # (max ULP 0) and a preparation to rc 0 -- for a donor on the same
+    # lattice as the atmosphere.  When the two CDS files sit on lattices
+    # shifted by part of a cell (corners off the 0.25 lattice), the
+    # donor is regridded by the native engine (bilinear, mask-aware,
+    # nearest for the land mask; one donor step of edge allowance) and
+    # the receipt says so (era5-137 grid mismatch, 2026-11-10).
     "era5-model-level-l137-grib2-v1": _profile(
         "rw-wps-era5-model-level-l137-grib2",
         source_format="grib2",
         mapping="65cfca7fc9fc6be102c796bd481126fe9e22491df8342fbaa1ff54b087fb09c6",
-        composition="eab1fcd5c10a746ebdaf269e910e08ea77a40d0db9789539423cbda477201e62",
+        composition="f8018559badbe5d974f19406d2b33b1d60942b726c58ced2d08fbcb20cf3833f",
         provenance="3c6477f94c1ab3428c5f3f1d6fb29c57ca9620dfecf41d600ca165df8609da7c",
         data_role="physical_analysis_surface_data",
         provenance_role="physical_analysis_surface_provenance",

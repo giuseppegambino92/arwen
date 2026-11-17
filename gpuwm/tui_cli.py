@@ -67,7 +67,10 @@ def tui_main(args) -> int:
             if value is not None:
                 command.extend(("--" + name.replace("_", "-"), str(value)))
         if getattr(args, "enable_local_da", False):
-            command.append("--enable-local-da")
+            # Accepted so an old launcher line still opens the terminal.
+            from gpuwm.removed_commands import REMOVED_COMMANDS
+            print(f"gpuwm tui: --enable-local-da does nothing: {REMOVED_COMMANDS['local-da']}",
+                  file=sys.stderr)
         # The terminal spawns every engine worker from this interpreter with
         # -P; PYTHONSAFEPATH covers the same ground for anything else it runs,
         # so a gpuwm/ folder in the launch directory never shadows the engine.

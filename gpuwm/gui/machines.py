@@ -7,7 +7,7 @@ or ``$GPUWM_MACHINES_FILE``), so adding a host is adding a row::
     name = "gpu-box"
     host = "me@gpu-box.local"
     workspace = "/data/gpuwm"
-    owner_file = "/data/gpu-mutex/OWNER"
+    owner_file = "/data/card-queue/OWNER"
 
 SSH is key authentication only: every call runs ``ssh -o BatchMode=yes``,
 which never asks for a password, and a row has no password field to

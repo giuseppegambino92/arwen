@@ -81,7 +81,8 @@ def test_obsolete_terminal_contract_refuses_without_fallback(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("enable_local_da", [False, True])
-def test_public_tui_arguments_survive_a_real_subprocess(monkeypatch, tmp_path, enable_local_da):
+def test_public_tui_arguments_survive_a_real_subprocess(monkeypatch, tmp_path, capsys,
+                                                       enable_local_da):
     from gpuwm.cli import build_parser
 
     # The probe records the actual argv reconstructed by the OS, including
@@ -122,9 +123,15 @@ def test_public_tui_arguments_survive_a_real_subprocess(monkeypatch, tmp_path, e
     expected = [str(binary), "--python", sys.executable]
     for flag, value in values.items():
         expected.extend((flag, str(Path(value))))
-    if enable_local_da:
-        expected.append("--enable-local-da")
+    # 3.0.3 removed the local data assimilation: the old switch still opens
+    # the terminal, is not passed on, and says once why it does nothing.
     assert actual == expected
+    error = capsys.readouterr().err
+    if enable_local_da:
+        assert "--enable-local-da does nothing" in error
+        assert "removed in gpuwm 3.0.3" in error
+    else:
+        assert "local-da" not in error
 
 
 def test_local_da_opt_in_is_hidden_from_ordinary_tui_help(capsys):

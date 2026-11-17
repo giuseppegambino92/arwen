@@ -1560,6 +1560,23 @@ class RunConfig:
     # stale-ESTG arithmetic.
     noahmp_melt_reset_esat: bool = _config_field(
         default=_correct_mode.CORRECT_KEYS_DEFAULT, kw_only=True)
+    # ML1 (3.0.3): MYNN's BouLac downward length takes the sign of NCAR/
+    # MYNN-EDMF 399f50f (PR 94) in its constant-theta (linear) branch,
+    # theta(iz) - theta(izz); WRF v4.6.1 divides by theta(izz) - theta(iz),
+    # so a parcel that stops in a layer of exactly constant theta gets a
+    # negative last step and a downward length short by twice it
+    # (kernels/mynn_pbl.cu, MYNN_BOULAC_DOWN_SIGN).  Read on bl_pbl_physics
+    # = 5 with bl_mynn_version "wrf_461" or "gsd_41", bl_mynn_mixlength = 1.
+    # Off is WRF's arithmetic.
+    mynn_boulac_down_sign: bool = _config_field(
+        default=_correct_mode.CORRECT_KEYS_DEFAULT, kw_only=True)
+    # ML1's second key (3.0.3): WRF's own BouLac PBL (bl_pbl_physics = 8,
+    # module_bl_boulac.F) and the k-epsilon PBL (17, module_bl_keps.F) carry
+    # the same downward length loop with the same sign (wrf-model/WRF PR 2431);
+    # on, both compile the bbb -> 0 limit's sign (kernels/boulac.cu,
+    # kernels/keps.cu, BOULAC_DOWN_SIGN).  Off is WRF's arithmetic.
+    pbl_boulac_down_sign: bool = _config_field(
+        default=_correct_mode.CORRECT_KEYS_DEFAULT, kw_only=True)
     # WRF's Pollard and three-dimensional PWP oceans. New PWP controls
     # are keyword-only so the existing positional constructor is stable.
     sf_ocean_physics: int = 0
@@ -2344,15 +2361,19 @@ class RunConfig:
     j_pos: float = _config_field(default=5.e9, kw_only=True)
     j_neg: float = _config_field(default=1.e9, kw_only=True)
     j_neu: float = _config_field(default=1.e9, kw_only=True)
-    #: Opt-in upstream MYNN v6.1 bug fixes on the WRF 4.6.1 MYNN route
+    #: Upstream MYNN v6.1 bug fixes on the WRF 4.6.1 MYNN route
     #: (NCAR/MYNN-EDMF v6.1.1 and NCAR/MYNN-SFC v6.1.0, Apache-2.0;
     #: gpuwm/core/mynn_pbl_v61.py lists each fix and what is not carried):
     #: dew/frost no longer deleted, the surface-density virtual-temperature
     #: factor, ground-Exner surface theta, the PBL-height search start, and
     #: no surface-layer cold-start reset on a cycled start.  Labelled
-    #: "upstream MYNN v6.1 fixes, not bitwise to WRF".  Appended last,
-    #: keyword-only and off by default, so every earlier run is unchanged.
-    mynn_fixes_v61: bool = _config_field(default=False, kw_only=True)
+    #: "upstream MYNN v6.1 fixes, not bitwise to WRF".  Correct-mode finding
+    #: MY1 (gpuwm/correct_mode.py), so on by default (fixed means default)
+    #: and off in physics.mode = 'exact' and in a strict WRF process; read
+    #: only by bl_pbl_physics = 5 at bl_mynn_version = "wrf_461".  False is
+    #: WRF 4.6.1's MYNN as written, still selectable.  Keyword-only.
+    mynn_fixes_v61: bool = _config_field(
+        default=_correct_mode.CORRECT_KEYS_DEFAULT, kw_only=True)
     #: Noah-MP snow compaction overburden parameter C_bd.  1 is WRF v4's
     #: fixed 0.021 m3/kg (default, byte-identical); 2 is C_bd(T_air, p_sfc)
     #: after Abolafia-Rosenzweig et al. 2024 (JAMES, Eq. 11-12),
@@ -2423,7 +2444,8 @@ CORRECT_MODE_RESTART_BREAK_NOTICE = (
     "wdm6_conservative_surface, wsm3_conservative_surface, "
     "wsm5_conservative_surface, wsm7_conservative_surface, "
     "ntiedtke_dry_mass_coupling, hydrometeor_handover_numbers, "
-    "noahmp_melt_reset_esat); otherwise "
+    "noahmp_melt_reset_esat, mynn_fixes_v61, "
+    "mynn_boulac_down_sign, pbl_boulac_down_sign); otherwise "
     "restart from t = 0.")
 
 #: The same accuracy for the 2.8.9 WRF-folder default (D8): a fixed-step
@@ -9034,25 +9056,12 @@ def validate_run_config(cfg: RunConfig, *, native_fire_ideal: bool = False) -> R
         raise ConfigurationRefused(
             "mynn_fixes_v61 must be true or false: it selects the upstream "
             "MYNN v6.1 fixes or the WRF 4.6.1 MYNN as written.")
-    if cfg.mynn_fixes_v61:
-        mynn_pbl = cfg.bl_pbl_physics == 5
-        mynn_sfc = cfg.sf_sfclay_physics == 5
-        if not (mynn_pbl or mynn_sfc):
-            raise ConfigurationRefused(
-                "mynn_fixes_v61 needs the MYNN PBL (bl_pbl_physics = 5) or "
-                "the MYNN surface layer (sf_sfclay_physics = 5): with neither "
-                "the run would claim fixes it never runs.")
-        if mynn_pbl and cfg.bl_mynn_version != "wrf_461":
-            raise ConfigurationRefused(
-                f"mynn_fixes_v61 with bl_mynn_version={cfg.bl_mynn_version!r}: "
-                "the fixes are marked edits of the WRF 4.6.1 MYNN unit "
-                "(gpuwm/core/mynn_pbl_v61.py); the wrf_471 and gsd_41 "
-                "generations are other sources and would run without them.")
-        if mynn_sfc and cfg.mynn_sfclay_variant != "wrf_461":
-            raise ConfigurationRefused(
-                f"mynn_fixes_v61 with mynn_sfclay_variant="
-                f"{cfg.mynn_sfclay_variant!r}: the surface-layer fix is "
-                "written for the WRF 4.6.1 SFCLAY_mynn first-step block.")
+    # mynn_fixes_v61 is correct-mode key MY1: on by default for every run,
+    # and read only where it applies (gpuwm.core.mynn_pbl_v61.pbl_fixes_active,
+    # correct_mode.KEY_SCOPE / KEY_GENERATIONS).  Elsewhere it reaches
+    # nothing, the checkpoint echo and digest drop it, and the run receipt
+    # does not list it in effect; a wrf_471 / wrf_480 MYNN run lists MY1 as
+    # uncorrected.  So it is no longer refused off the wrf_461 route.
     if cfg.bl_mynn_cloud_tendency_form not in ("wrf_461", "gsd_41"):
         raise ConfigurationRefused("bl_mynn_cloud_tendency_form must be 'wrf_461' or 'gsd_41'")
     if cfg.bl_mynn_cloud_tendency_form == "gsd_41" and cfg.bl_mynn_version != "gsd_41":

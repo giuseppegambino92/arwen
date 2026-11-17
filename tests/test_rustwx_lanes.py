@@ -1060,52 +1060,6 @@ def test_the_tile_streamed_lane_s_own_call_renders(tmp_path):
 
 
 @pytest.mark.skipif(_built("rw_wrfbatch") is None, reason=_BUILD_HINT)
-def test_the_da_cycle_lane_s_own_call_renders(tmp_path):
-    """The other npz lane's invocation, on the same terms.
-
-    ``tools/da_cycle_prepared._write_composite_wrfout`` writes the
-    sibling wrfout for a DA leg's composite.  It supplies
-    ``wrf_global_attrs``, so unlike the tile-streamed lane it always
-    carried a run origin -- this pins that, because the two lanes share a
-    writer and a change made for one must not silently take the origin
-    away from the other.
-    """
-
-    pytest.importorskip("netCDF4")
-    from gpuwm.static.lambert import LambertGrid
-    from tools.da_cycle_prepared import _write_composite_wrfout
-
-    ny, nx = 20, 26
-    grid = LambertGrid(e_we=nx + 1, e_sn=ny + 1, dx=3000.0, dy=3000.0,
-                       ref_lat=39.79, ref_lon=-104.55, truelat1=30.0,
-                       truelat2=60.0, stand_lon=-104.55)
-    yy, xx = np.mgrid[0:ny, 0:nx].astype(np.float32)
-    composite = (58.0 * np.exp(-(((yy - 10) / 3.5) ** 2
-                                 + ((xx - 13) / 4.5) ** 2)) - 10.0)
-    cfg = SimpleNamespace(dx=3000.0, dy=3000.0, dt=6.0)
-    experiment = SimpleNamespace(
-        start_time=datetime.datetime(2021, 12, 30, 17, 0, 0))
-    written = _write_composite_wrfout(
-        tmp_path / "leg01_composite.npz", composite, grid, cfg, 900.0,
-        experiment, label="leg01")
-    assert written is not None and written.is_file()
-
-    netCDF4 = pytest.importorskip("netCDF4")
-    with netCDF4.Dataset(written) as dataset:
-        assert dataset.START_DATE == "2021-12-30_17:00:00"
-
-    out = tmp_path / "png"
-    result = subprocess.run(
-        [str(_built("rw_wrfbatch")), "--store-root", str(tmp_path / "store"),
-         "--out-dir", str(out), "--products", "all", "--frames", "all",
-         "--width", "500", "--height", "400", str(written)],
-        capture_output=True, text=True, errors="replace", timeout=600)
-    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
-    produced = sorted(p.name for p in out.rglob("*.png"))
-    assert any("composite_reflectivity" in name for name in produced), produced
-
-
-@pytest.mark.skipif(_built("rw_wrfbatch") is None, reason=_BUILD_HINT)
 def test_the_streamed_lane_s_updraft_reaches_a_production_panel(tmp_path):
     """The column extremes draw, under WRF's own names for them.
 

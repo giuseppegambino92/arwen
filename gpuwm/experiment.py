@@ -5866,7 +5866,16 @@ def _nudging_from_tables(raw, domains):
     if row is None:
         return None
     from gpuwm.spectral_nudging.config import from_mapping
-    return from_mapping(row, tuple(dc.grid_id for dc in domains))
+    options = from_mapping(row, tuple(dc.grid_id for dc in domains))
+    if options is not None:
+        # NUDGING_STEP_STRENGTH: every door (TOML, --nudging, WRF &fdda import,
+        # stock wrfinput) loads here, so a coefficient the explicit update
+        # overshoots is refused before any preparation or card time.
+        for dc in domains:
+            controls = options.for_domain(dc.grid_id)
+            if controls is not None:
+                controls.check_step(float(dc.run.dt), where=f"d{dc.grid_id:02d}")
+    return options
 
 
 def experiment_config_document(exp: ExperimentConfig) -> dict[str, object]:

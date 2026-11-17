@@ -119,9 +119,31 @@ def resolve_metem_run(directory, *, rrtmg_variant=None, lake_state=None, lake_st
         item = metadata[domain.grid_id]
         if (domain.run.nx, domain.run.ny) != (item.nx, item.ny):
             raise ValueError(f'd{domain.grid_id:02d}: namelist dimensions differ from met_em')
+        # At plan review, so `gpuwm check --met-em` and `gpuwm run --met-em`
+        # give one answer: the run's land model reads LAI12M only with
+        # rdlai2d (gpuwm.metem_forecast.metgrid_soil takes VEGPARM.TBL leaf
+        # area otherwise, as WRF does).
+        if metgrid_run_reads_lai12m(domain.run) and 'LAI12M' not in item.variables:
+            raise ValueError(f'{item.path.name}: land-surface initialization needs [\'LAI12M\'] '
+                             '(rdlai2d = .true. makes the land model read the monthly LAI12M field; '
+                             'with rdlai2d = .false. it takes leaf area from VEGPARM.TBL); '
+                             'retain these metgrid/geogrid fields')
     return MetemRun(directory, namelist, paths, metadata, exp, text, report, int(interval), parsed,
                     metem_coverage_seconds(paths, exp.start_time),
                     met_em_source_top_pressure_pa(paths[1][0]), lake_state_note)
+
+
+def metgrid_run_reads_lai12m(cfg):
+    """Does this run's land model read the monthly LAI12M field?
+
+    Only Noah (2) and RUC (3) with ``rdlai2d`` do (gpuwm/config.py refuses
+    the flag for any other land model); every other run takes leaf area from
+    its tables, exactly as WRF does.  It lives here, in the door the
+    preparation-only package carries, so plan review needs no forecast module
+    (THE BREAKAGE: the RW-WPS wheel staging refused metem_door.py importing
+    gpuwm.metem_forecast, an excluded executor module).
+    """
+    return int(getattr(cfg, 'sf_surface_physics', 0)) in (2, 3) and bool(getattr(cfg, 'rdlai2d', False))
 
 
 def metem_coverage_seconds(paths, start_time):

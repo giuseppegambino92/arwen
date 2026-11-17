@@ -299,7 +299,9 @@ fn main() {
         }
         if matches!(mode, "idle" | "local-da-opt-in" | "worker" | "completed" | "downscale" | "failed" | "slow-probe") {
             let handoff = document(&root.join("observed-handoff.json"));
-            assert_eq!(handoff["experimental_features"]["local_da"], mode == "local-da-opt-in");
+            // gpuwm 3.0.3 removed the local data assimilation: the old
+            // opt-in is accepted and the handoff never enables it.
+            assert_eq!(handoff["experimental_features"]["local_da"], false);
             let status = document(Path::new(handoff["status_path"].as_str().unwrap()));
             assert_eq!(status["state"], "closed");
             let log_path = Path::new(handoff["control_dir"].as_str().unwrap()).join("companion.log");

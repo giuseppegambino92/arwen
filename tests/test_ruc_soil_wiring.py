@@ -881,9 +881,9 @@ def test_a_source_that_states_its_values_at_layer_bottoms_is_admitted():
 
     for index, midpoint in enumerate((0.05, 0.25, 0.7, 1.5)):
         assert np.allclose(remapped_t[index],
-                           _line(t_nodes, midpoint), rtol=0.0, atol=1e-12)
+                           _line(t_nodes, midpoint), rtol=2.5e-7, atol=0.0)  # REAL arithmetic, as real.exe
         assert np.allclose(remapped_m[index],
-                           _line(m_nodes, midpoint), rtol=0.0, atol=1e-12)
+                           _line(m_nodes, midpoint), rtol=2.5e-7, atol=0.0)  # REAL arithmetic, as real.exe
 
 
 def test_a_location_the_sampler_has_no_rule_for_is_refused_by_name():
@@ -1008,9 +1008,9 @@ def test_a_layer_top_source_starting_at_the_surface_remaps_on_its_own_value():
 
     for index, midpoint in enumerate((0.05, 0.25, 0.7, 1.5)):
         assert np.allclose(remapped_t[index],
-                           _line(t_nodes, midpoint), rtol=0.0, atol=1e-12)
+                           _line(t_nodes, midpoint), rtol=2.5e-7, atol=0.0)  # REAL arithmetic, as real.exe
         assert np.allclose(remapped_m[index],
-                           _line(m_nodes, midpoint), rtol=0.0, atol=1e-12)
+                           _line(m_nodes, midpoint), rtol=2.5e-7, atol=0.0)  # REAL arithmetic, as real.exe
 
 
 def test_a_derived_sample_that_lands_on_the_anchor_is_still_a_collision():

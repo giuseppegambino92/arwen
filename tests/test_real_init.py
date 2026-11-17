@@ -397,10 +397,10 @@ def test_hrrr_soil_depth_nodes_are_interpolated_to_noah_midpoints():
     target = np.array([0.05, 0.25, 0.70, 1.50])
     np.testing.assert_allclose(
         soil.soil_temperature[:, 0, 0], 280.0 + 2.0 * target,
-        rtol=0.0, atol=1.0e-13)
+        rtol=2.5e-7, atol=0.0)  # REAL storage, as real.exe holds the start soil
     np.testing.assert_allclose(
         soil.soil_moisture[:, 0, 0], 0.10 + 0.05 * target,
-        rtol=0.0, atol=1.0e-13)
+        rtol=2.5e-7, atol=0.0)  # REAL storage, as real.exe holds the start soil
     assert soil.deep_soil_temperature[0, 0] == 281.0
 
     with pytest.raises(KeyError, match="SOILT and SOILW together"):

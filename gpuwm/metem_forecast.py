@@ -130,6 +130,9 @@ class MetemInitialization:
         return bundle.cache_reader.metadata
 
 
+from gpuwm.metem_door import metgrid_run_reads_lai12m  # noqa: E402  (the door owns it; see there)
+
+
 def metgrid_soil(case, cfg, *, fractional_seaice):
     """Bind the actual WPS soil coordinates to the existing soil remapper."""
     from gpuwm.config import soil_layer_count
@@ -139,11 +142,29 @@ def metgrid_soil(case, cfg, *, fractional_seaice):
     from gpuwm.static.build import deep_soil_temperature_at_terrain
 
     static = dict(case.statics)
+    reads_lai12m = metgrid_run_reads_lai12m(cfg)
     required = ('LANDSEA', 'SKINTEMP', 'LANDMASK', 'LU_INDEX', 'SCT_DOM',
-                'SOILTEMP', 'GREENFRAC', 'LAI12M', 'SNOALB')
+                'SOILTEMP', 'GREENFRAC', 'SNOALB') + (('LAI12M',) if reads_lai12m else ())
     missing = sorted(set(required)-set(static))
     if missing:
-        raise ValueError(f'{case.path.name}: land-surface initialization needs {missing}; retain these metgrid/geogrid fields')
+        why = (' (rdlai2d = .true. makes the land model read the monthly LAI12M field; '
+               'with rdlai2d = .false. it takes leaf area from VEGPARM.TBL)'
+               if missing == ['LAI12M'] else '')
+        raise ValueError(f'{case.path.name}: land-surface initialization needs {missing}{why}; retain these metgrid/geogrid fields')
+    if 'LAI12M' not in static:
+        # WPS output without LAI12M (metgrid before V3.6, or a GEOGRID.TBL
+        # that does not interpolate it), on a run that does not read it.
+        # real.exe leaves grid%lai12m zero-initialised and its
+        # monthly_interp_to_date (module_initialize_real.F, the LAI12M call
+        # beside GREENFRAC and ALBEDO12M) writes LAI = 0 to wrfinput; Noah
+        # and RUC with rdlai2d = .false. then take leaf area from VEGPARM.TBL
+        # (LAIMIN/LAIMAX) at every call.  Native WRF 4.7.1 on the WRF
+        # tutorial's January 2000 met_em (metgrid V3.5.1): wrfinput_d01 LAI
+        # is 0.0 at every cell.  The same zero field here keeps the start
+        # identical to it.
+        static['LAI12M'] = np.zeros_like(np.asarray(static['GREENFRAC']))
+        print(f'met_em: {case.path.name} carries no LAI12M; rdlai2d is off, so leaf area comes from '
+              'VEGPARM.TBL as in WRF (the start writes LAI = 0, as real.exe does).', flush=True)
     for name in ('LU_INDEX', 'SCT_DOM'):
         if not np.equal(static[name], np.rint(static[name])).all():
             raise ValueError(f'{name} must contain integer land/soil category identities')

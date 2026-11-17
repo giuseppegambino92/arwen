@@ -2590,10 +2590,6 @@
     "sha256": "2bc61cac5f094b7ef21290a4d7b96dfb433db1cbdc889e3f24569932fdea6811"
    },
    {
-    "file": "gpuwm/ensemble/batch_acoustic_fusion.py",
-    "sha256": "5661292fde4c7ae699be970b2112ed8c27aeb1b11ed77979e7f76946554c3783"
-   },
-   {
     "file": "gpuwm/ensemble/batch_fluxes.py",
     "sha256": "55c10d0f91bd9740bde8b2b13af292cb336f76bd8850e8fcfd6f2c6dee58541b"
    },
@@ -2998,10 +2994,6 @@
    {
     "file": "gpuwm/eclipse_windows.py",
     "sha256": "5ec704690ffec70206342ddde57a5913b6ebf88847ce4e82a1c8b781491b3bea"
-   },
-   {
-    "file": "gpuwm/ensemble/batch_acoustic_fusion.py",
-    "sha256": "af01fd4273be18a84cbdd2a190387ab6d7e0d47705591ab93a3449145eb15177"
    },
    {
     "file": "gpuwm/ensemble/batch_fluxes.py",

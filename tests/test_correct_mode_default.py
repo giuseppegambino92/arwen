@@ -17,6 +17,8 @@ are tests/test_correct_mode_water_budget.py, on the GPU shard.
 """
 from __future__ import annotations
 
+import dataclasses
+
 from dataclasses import replace
 from pathlib import Path
 
@@ -40,7 +42,10 @@ def test_exact_mode_authors_every_key_off():
                             "wsm5_conservative_surface": False,
                             "wsm7_conservative_surface": False,
                             "hydrometeor_handover_numbers": False,
-                            "noahmp_melt_reset_esat": False}
+                            "noahmp_melt_reset_esat": False,
+                            "mynn_fixes_v61": False,
+                            "mynn_boulac_down_sign": False,
+                            "pbl_boulac_down_sign": False}
     assert res.applied == ()
     assert "forced_by" not in res.receipt()
 
@@ -55,8 +60,11 @@ def test_correct_mode_sets_every_registered_key():
                             "wsm5_conservative_surface": True,
                             "wsm7_conservative_surface": True,
                             "hydrometeor_handover_numbers": True,
-                            "noahmp_melt_reset_esat": True}
-    assert res.receipt()["applied_findings"] == ["WB1", "WB4", "WB5", "HN1", "SN1"]
+                            "noahmp_melt_reset_esat": True,
+                            "mynn_fixes_v61": True,
+                            "mynn_boulac_down_sign": True,
+                            "pbl_boulac_down_sign": True}
+    assert res.receipt()["applied_findings"] == ["WB1", "WB4", "WB5", "HN1", "SN1", "MY1", "ML1"]
 
 
 def test_correct_skip_drops_one_correction():
@@ -69,7 +77,10 @@ def test_correct_skip_drops_one_correction():
                             "wsm5_conservative_surface": False,
                             "wsm7_conservative_surface": False,
                             "hydrometeor_handover_numbers": True,
-                            "noahmp_melt_reset_esat": True}
+                            "noahmp_melt_reset_esat": True,
+                            "mynn_fixes_v61": True,
+                            "mynn_boulac_down_sign": True,
+                            "pbl_boulac_down_sign": True}
     assert res.receipt()["physics.correct_skip"] == ["WB5"]
 
 
@@ -80,7 +91,7 @@ def test_the_default_is_correct_in_a_default_process():
         pytest.skip("strict process; see the strict subprocess test")
     assert correct_mode.PHYSICS_MODE_DEFAULT == "correct"
     assert correct_mode.resolve() == correct_mode.resolve("correct")
-    assert correct_mode.resolve(None, ["WB4"]).applied == ("WB1", "WB5", "HN1", "SN1")
+    assert correct_mode.resolve(None, ["WB4"]).applied == ("WB1", "WB5", "HN1", "SN1", "MY1", "ML1")
 
 
 def test_strict_wrf_mode_forces_exact_and_records_it():
@@ -192,7 +203,7 @@ def test_wb5_spans_wsm6_and_wdm6_and_a_one_key_arm_reads_as_itself():
                     **{**correct_mode.resolve("correct").settings,
                        "wsm6_conservative_surface": False})
     receipt = correct_mode.resolution_of(arm).receipt()
-    assert receipt["applied_findings"] == ["WB1", "WB4", "WB5", "HN1", "SN1"]
+    assert receipt["applied_findings"] == ["WB1", "WB4", "WB5", "HN1", "SN1", "MY1", "ML1"]
     assert receipt["keys"] == {"thompson_cloud_surface_booking": True,
                                "ntiedtke_dry_mass_coupling": True,
                                "wdm6_conservative_surface": True,
@@ -200,7 +211,10 @@ def test_wb5_spans_wsm6_and_wdm6_and_a_one_key_arm_reads_as_itself():
                                "wsm5_conservative_surface": True,
                                "wsm7_conservative_surface": True,
                                "hydrometeor_handover_numbers": True,
-                            "noahmp_melt_reset_esat": True}
+                            "noahmp_melt_reset_esat": True,
+                            "mynn_fixes_v61": True,
+                            "mynn_boulac_down_sign": True,
+                            "pbl_boulac_down_sign": True}
 
 
 def test_run_receipt_names_each_domains_mode():
@@ -405,7 +419,8 @@ def test_every_carrier_scheme_is_a_shipped_scheme():
     cannot hide a carrier from the gate below."""
     shipped = {"mp_physics": set(_shipped("microphysics")),
                "cu_physics": set(_shipped("cumulus")),
-               "sf_surface_physics": set(_shipped("land_surface"))}
+               "sf_surface_physics": set(_shipped("land_surface")),
+               "bl_pbl_physics": set(_shipped("pbl"))}
     for c in correct_mode.CORRECTIONS:
         assert c.carriers, c.finding
         for selector, schemes in c.carriers:
@@ -507,3 +522,66 @@ def test_sn1_is_a_noahmp_correction_on_by_default_and_off_in_exact():
     on = NoahmpRuntimeParameters(melt_reset_esat=True)
     assert on.land_options["melt_reset_esat"] is True
     assert "melt_reset_esat" not in NoahmpRuntimeParameters().land_options
+
+
+# --------------------------------------- 3.0.3: MY1, MYNN dew and frost --
+_MYNN = dict(_TINY, bl_pbl_physics=5, sf_sfclay_physics=5)
+
+
+def test_my1_a_default_mynn_run_limits_dew_instead_of_deleting_it():
+    """MY1 (WRF 4.6.1's MYNN deletes every downward surface vapour flux:
+    ``min(0.9*sqv - 1e-8, 0)`` is 0 for any sqv above 1.1e-8; NCAR/MYNN-EDMF
+    f3c9d9e) is correct-mode key ``mynn_fixes_v61``.  Breakage prevented: a
+    plain MYNN run that still deletes dew and frost (too much overnight
+    fog), and an exact or strict WRF proof that runs the fix.  Before 3.0.3
+    the key defaulted off, so a default run took the WRF 4.6.1 limiter."""
+    from gpuwm.core.mynn_pbl_v61 import pbl_fixes_active, sfclay_fixes_active
+    assert correct_mode.FINDING_BY_KEY["mynn_fixes_v61"] == "MY1"
+    if correct_mode.STRICT:
+        pytest.skip("strict process; exact is forced there")
+    default = RunConfig(**_MYNN)
+    assert default.mynn_fixes_v61 is True
+    assert pbl_fixes_active(default) and sfclay_fixes_active(default)
+    # MY1 and ML1 (the BouLac length sign) both apply on a default MYNN run.
+    assert correct_mode.in_effect(default)["findings"][-2:] == ["MY1", "ML1"]
+    assert correct_mode.uncorrected(default) == []
+    exact = RunConfig(**_MYNN, **correct_mode.resolve("exact").settings)
+    assert exact.mynn_fixes_v61 is False and not pbl_fixes_active(exact)
+    skip = RunConfig(**_MYNN, **correct_mode.resolve("correct", ["MY1"]).settings)
+    assert not pbl_fixes_active(skip)
+    assert correct_mode.uncorrected(skip) == []
+
+
+@pytest.mark.parametrize("version,carried", [
+    ("wrf_461", False), ("wrf_471", True), ("wrf_480", True), ("gsd_41", False)])
+def test_my1_is_read_only_at_wrf_461_and_named_where_it_is_not(version, carried):
+    """The fixes are edits of the wrf_461 unit.  WRF 4.7.1's and 4.8.0's MYNN
+    hold the same limiter (data/mynn471, data/mynn480 model.cu) and run it
+    as WRF ships it: listed as uncorrected, never as applied.  GSD 4.1 adds
+    the flux with its sign: neither applied nor uncorrected."""
+    from gpuwm.core.mynn_pbl_v61 import pbl_fixes_active
+    if correct_mode.STRICT:
+        pytest.skip("strict process; exact is forced there")
+    cfg = RunConfig(**_MYNN, bl_mynn_version=version)
+    on = version == "wrf_461"
+    assert pbl_fixes_active(cfg) is on
+    assert correct_mode.key_in_scope("mynn_fixes_v61", dataclasses.asdict(cfg)) is on
+    assert ("MY1" in correct_mode.in_effect(cfg)["findings"]) is on
+    assert ("MY1" in correct_mode.uncorrected(cfg)) is carried
+    # An echo that dropped the generation at its default reads as wrf_461.
+    assert correct_mode.key_in_scope("mynn_fixes_v61", {"bl_pbl_physics": 5})
+    assert not correct_mode.key_in_scope("mynn_fixes_v61", {"bl_pbl_physics": 1})
+
+
+def test_my1_outside_mynn_does_not_move_the_echo_or_digest():
+    """On by default for every run, the key echoes and digests only where
+    the wrf_461 MYNN reads it, so a non-MYNN run's checkpoint identity is
+    what it was while the key defaulted off."""
+    from gpuwm.io import restart
+    for overrides in ({}, {"bl_pbl_physics": 1, "sf_sfclay_physics": 1},
+                      {**_MYNN, "bl_mynn_version": "gsd_41"}):
+        cfg = RunConfig(**{**_TINY, **overrides})
+        assert "mynn_fixes_v61" not in restart.configuration_echo(cfg), overrides
+    mynn = RunConfig(**_MYNN)
+    if not correct_mode.STRICT:
+        assert restart.configuration_echo(mynn)["mynn_fixes_v61"] is True

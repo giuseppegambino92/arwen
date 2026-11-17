@@ -1726,8 +1726,7 @@
         "{run_plan}"
       ],
       "da_methods": [
-        "none",
-        "local-da"
+        "none"
       ],
       "ensembles": false,
       "admission_inputs": [
@@ -1980,8 +1979,7 @@
         "{run_plan}"
       ],
       "da_methods": [
-        "none",
-        "local-da"
+        "none"
       ],
       "ensembles": true,
       "admission_inputs": [
@@ -2239,8 +2237,7 @@
         "{run_plan}"
       ],
       "da_methods": [
-        "none",
-        "local-da"
+        "none"
       ],
       "ensembles": false,
       "admission_inputs": [

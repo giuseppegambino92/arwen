@@ -1252,7 +1252,9 @@ def test_list_products_reports_the_full_catalog(wrfout, tmp_path, capsys):
     # recipes: uh_0to1km/0to2km/0to3km, composite_reflectivity_uh0to1km/
     # 0to2km/0to3km and 1km_reflectivity_uh2to5km/0to1km/0to2km/0to3km:
     # 414 + 10 = 424.
-    assert "total=424" in out
+    # The u and v wind-component maps (471e0eccf5: 10m_u_wind, 10m_v_wind and
+    # 850/700/500mb_u_wind and _v_wind) add eight direct recipes: 424 + 8 = 432.
+    assert "total=432" in out
     for slug in ("uh_0to1km", "uh_0to2km", "uh_0to3km",
                  "composite_reflectivity_uh0to1km",
                  "composite_reflectivity_uh0to2km",

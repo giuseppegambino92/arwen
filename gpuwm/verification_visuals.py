@@ -385,6 +385,53 @@ def discover_histories(root: Path, *, label="WOOF", paths=None,
     return frames
 
 
+def select_run_requests(root: Path, *, cycle=None, domain=None,
+                        first_hour=None, last_hour=None) -> list[dict]:
+    """A run folder's requests, narrowed to the domain and hours the caller named.
+
+    The same rows :func:`score_available` takes when it is handed none (the
+    retained requests of ``verification.json`` plus the frames on disk), then
+    only those of ``domain`` and of forecast hours ``first_hour`` to
+    ``last_hour``.  Hours count from ``cycle`` when it is given and otherwise
+    from the earliest frame of the run.
+
+    THE BREAKAGE THIS PREVENTS (3.0.0 artefact check, 2026-11-10):
+    ``gpuwm verify-visuals RUN --domain d02 --first-hour 2 --last-hour 3``
+    took the three flags and read none of them on a run folder, so a user who
+    asked for two hours of one nest waited for the whole sweep of every domain.
+    """
+    root = Path(root).resolve()
+    previous_state = _read(root / MANIFEST_NAME, {}) or {}
+    rows = {key: row["request"] for key, row in previous_state.get("hours", {}).items()
+            if row.get("request")}
+    for row in discover_histories(root, cycle=cycle):
+        rows[f"{row['domain']}/{row['valid_time']}"] = row
+    rows = list(rows.values())
+    if not rows:
+        raise ValueError(f"{root} holds no finished history frame to score")
+    start = _time(cycle) if cycle else min(_time(row["valid_time"]) for row in rows)
+    kept = []
+    for row in rows:
+        if domain is not None and row["domain"] != domain:
+            continue
+        lead = (_time(row["valid_time"]) - start).total_seconds() / 3600.0
+        if first_hour is not None and lead < first_hour:
+            continue
+        if last_hour is not None and lead > last_hour:
+            continue
+        kept.append(row)
+    if not kept:
+        named = ", ".join(sorted({row["domain"] for row in rows}))
+        last = max((_time(row["valid_time"]) - start).total_seconds() / 3600.0 for row in rows)
+        asked = " ".join(f"{flag} {value}" for flag, value in (
+            ("--domain", domain), ("--first-hour", first_hour), ("--last-hour", last_hour))
+            if value is not None)
+        raise ValueError(
+            f"no finished frame matches {asked}: this run holds "
+            f"{named} through hour {last:g} from {_stamp(start)}")
+    return kept
+
+
 def histories_before_restart(paths, cycle):
     """This run's histories from before a checkpoint restart, beside its frames.
 
@@ -1195,9 +1242,16 @@ def command_main(args):
         elif args.point_arm or args.field_arm:
             if not args.cycle:
                 raise ValueError("packaged verification needs --cycle to bind each valid hour")
-            requests = discover_packaged(cycle=args.cycle, domain=args.domain,
+            first = 1 if args.first_hour is None else args.first_hour
+            last = 48 if args.last_hour is None else args.last_hour
+            requests = discover_packaged(cycle=args.cycle, domain=args.domain or "d01",
                 point_arms=args.point_arm, field_arms=args.field_arm, grid=args.grid,
-                station_table=args.station_table, hours=range(args.first_hour, args.last_hour + 1))
+                station_table=args.station_table, hours=range(first, last + 1))
+        elif (args.domain is not None or args.first_hour is not None
+              or args.last_hour is not None):
+            requests = select_run_requests(
+                args.run_dir, cycle=args.cycle, domain=args.domain,
+                first_hour=args.first_hour, last_hour=args.last_hour)
         else:
             requests = None
         if args.list_pending:
@@ -1213,6 +1267,21 @@ def command_main(args):
         return 2
 
 
+def domain_id(text: str) -> str:
+    """``--domain`` as the frames name it: ``1``, ``d1``, ``D01`` and ``d01`` are all ``d01``.
+
+    THE BREAKAGE THIS PREVENTS (3.0.3 candidate check, 2026-11-15):
+    ``gpuwm verify-visuals RUN --domain 1`` exited 2 with "no finished frame
+    matches ... this run holds d01", which reads as if the run had no frame,
+    when the only fault was the spelling of the domain.
+    """
+    matched = re.fullmatch(r"\s*[dD]?0*([1-9][0-9]?)\s*", str(text))
+    if not matched:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a domain: give its number or its frame name, for example 1 or d01")
+    return f"d{int(matched.group(1)):02d}"
+
+
 def register_cli(subparsers):
     parser = subparsers.add_parser("verify-visuals", help="score and render finished hours against arrived observations")
     parser.add_argument("run_dir", type=Path)
@@ -1220,14 +1289,22 @@ def register_cli(subparsers):
     parser.add_argument("--cycle", help="UTC cycle, YYYY-MM-DDTHH[:MM:SS]Z")
     parser.add_argument("--reference", default="hrrr", help="reference row in the native renderer table")
     parser.add_argument("--reference-dir", type=Path, help="existing native reference files, named by its metadata table")
-    parser.add_argument("--domain", default="d01")
+    parser.add_argument("--domain", default=None, type=domain_id, metavar="N|dNN",
+                        help="on a run folder, score this domain only, by number or frame name "
+                             "(1 and d01 are the same; default: every domain); "
+                             "with packaged arms, the domain they belong to (default d01)")
     parser.add_argument("--point-arm", action="append", default=[], metavar="LABEL=DIR")
     parser.add_argument("--field-arm", action="append", default=[], metavar="LABEL=TEMPLATE",
                         help="NPZ path template, for example LABEL=fields/run-f{hour:02d}.npz")
     parser.add_argument("--grid", type=Path, help="native lat/lon NPZ for archived field arrays")
     parser.add_argument("--station-table", type=Path, help="frozen station table used by point extracts")
-    parser.add_argument("--first-hour", type=int, default=1)
-    parser.add_argument("--last-hour", type=int, default=48)
+    parser.add_argument("--first-hour", type=int, default=None,
+                        help="first forecast hour to score, counted from --cycle or, on a run folder "
+                             "without it, from the run's first frame (default: 1 for packaged arms, "
+                             "every finished hour of a run folder)")
+    parser.add_argument("--last-hour", type=int, default=None,
+                        help="last forecast hour to score (default: 48 for packaged arms, every "
+                             "finished hour of a run folder)")
     parser.add_argument("--station-mode", choices=("observed", "error"), default="observed")
     parser.add_argument("--timeout", type=int, default=120, help="seconds allowed for each public-source command")
     parser.add_argument("--refresh", action="store_true", help="refetch observations and regenerate receipts")

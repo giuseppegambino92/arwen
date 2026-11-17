@@ -45,6 +45,9 @@ pub(crate) fn direct_recipe_render_controls(
         || matches!(recipe.style, RenderStyle::WeatherCategorical)
     {
         (Some(LegendMode::Categories), None)
+    } else if matches!(recipe.style, RenderStyle::WeatherQpf) {
+        // One listed colour per band (`crate::qpf::qpf_inches_scale`).
+        (Some(crate::qpf::qpf_legend_mode()), None)
     } else if matches!(recipe.style, RenderStyle::WeatherVisibility) {
         (Some(LegendMode::Thresholds), Some(200.0))
     } else if matches!(recipe.style, RenderStyle::AirQualityPm25 | RenderStyle::AirQualityOzone | RenderStyle::WeatherSnowfall | RenderStyle::WeatherSnowDepthChange) || filled_selector.field == CanonicalField::SnowfallLiquidEquivalent {
@@ -629,7 +632,9 @@ pub(crate) fn direct_fill_unit_conversion(
     } else if matches!(
         selector.field,
         CanonicalField::WindSpeed | CanonicalField::WindGust
-    ) {
+    ) || (recipe.style == RenderStyle::WeatherWindComponent
+        && matches!(selector.field, CanonicalField::UWind | CanonicalField::VWind))
+    {
         (UnitConvert::MsToKnots, Some("kt"))
     } else if selector.field == CanonicalField::TotalPrecipitation {
         if matches!(recipe.style, RenderStyle::WeatherQpf) {

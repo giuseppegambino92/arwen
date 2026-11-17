@@ -121,8 +121,8 @@ GPU_EXTRA_UNKNOWN_ACTION = ("pip install 'gpuwm[gpu-cu12]'  "
 RENDER_EXTRA_HINT = ("pip install 'gpuwm[render]'\n"
                      "  # installs wrf-rust (the derived-quantity core\n"
                      "  # gpuwm enprod and --engine matplotlib import) and\n"
-                     "  # pyshp (the shapefile reader the DA nowcast's\n"
-                     "  # basemaps read).  matplotlib is NOT in this extra:\n"
+                     "  # pyshp (the shapefile reader the basemaps\n"
+                     "  # read).  matplotlib is NOT in this extra:\n"
                      "  # it is a base dependency, installed already.")
 GEOG_STACK_HINT = (
     "pip install --upgrade 'gpuwm[geog]'\n"
@@ -1925,9 +1925,7 @@ _EXTRA_FACTS: dict[str, _ExtraFacts] = {
     # render` work anyway is entitled to think the report is wrong.
     "render": _ExtraFacts(
         doors=("gpuwm enprod", "gpuwm render --engine matplotlib",
-               "gpuwm go's render stage (it gates on the wrf package)",
-               "python -m tools.da_nowcast render and the launcher's "
-               "basemap endpoint (pyshp)"),
+               "gpuwm go's render stage (it gates on the wrf package)"),
         still_works="gpuwm render's DEFAULT rust engine, which draws from "
                     "the rw_wrfbatch binary and needs no Python package "
                     "from this extra",
@@ -1946,8 +1944,7 @@ _EXTRA_FACTS: dict[str, _ExtraFacts] = {
     # library their default path never loads.
     "dealias": _ExtraFacts(
         doors=("--dealias-engine vad-region, on python -m "
-               "tools.obs_radar_grid_build / tools.obs_radar_grid_from_pack "
-               "/ tools.da_nowcast run",),
+               "tools.obs_radar_grid_build / tools.obs_radar_grid_from_pack",),
         still_works="the shipped default --dealias-engine region-global, "
                     "which is the Rust library reported above",
         blocking=False, severity=SEVERITY_DEGRADED),

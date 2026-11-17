@@ -29,8 +29,7 @@ sys.path.insert(0, str(ROOT))
 from tools.battery import python_floor, run_must_run_gates, run_stage1  # noqa: E402
 
 #: The modules that reached cupy only through a sibling test module.
-SIBLING_CARD_MODULES = ("tests/test_da_cycle_join_gpu.py",
-                        "tests/test_noahmp_cold_start_device.py",
+SIBLING_CARD_MODULES = ("tests/test_noahmp_cold_start_device.py",
                         "tests/test_noahmp_device_wiring.py")
 
 

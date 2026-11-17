@@ -7604,12 +7604,24 @@ def _slab_component(registry: dict) -> None:
                 "num_soil_layers": "WRF init_soil_depth_1 defines five layers, "
                                    "with thicknesses 1, 2, 4, 8 and 16 cm."},
             "required_settings": {},
+            # The same structural list Noah, RUC and Noah-MP carry, for the
+            # same reason: it says who writes the exchange fields the slab
+            # reads (FLHC/FLQC in gpuwm.core.slab.launch_slab, CQS2 in the
+            # driver), and every active surface layer does -- the GFS layer
+            # (GFS_SFCLAY_OUTPUTS), TEMF (TEMF_SFCLAY_OUTPUTS), Pleim-Xiu
+            # (PX_SFCLAY_STATE) and QNSE through the Eta layer's seam
+            # (MYJ_SFCLAY_OUTPUTS).  The list used to stop at four, with a
+            # reason that named only the off layer, and validate_run_config
+            # ran the other four: the exhaustive authority walk found the
+            # slab with GFS, TEMF, QNSE and Pleim-Xiu refused at plan review
+            # and started by the run (3.0.3).
             "requires_components": {"surface_layer": [
-                "revised-mm5", "classic-mm5", "mynn", "eta-similarity"]},
+                "revised-mm5", "classic-mm5", "mynn", "eta-similarity",
+                "temf", "gfs", "qnse", "pleim-xiu"]},
             "requires_components_reasons": {
-                "surface_layer": "The slab consumes UST/CHS/CHS2/CQS2/FLHC/FLQC "
-                                 "exchange fields that have no writer when "
-                                 "sf_sfclay_physics=0."}},
+                "surface_layer": "The slab consumes the UST/CHS/CHS2/CQS2/FLHC/FLQC "
+                                 "exchange fields the surface layer writes; they "
+                                 "have no writer when sf_sfclay_physics=0."}},
         "consumers": {
             "reads_glw": True,
             "restart_algorithm_identity": "wrf-v4.7.1-slab-5layer-snow-fast-v3",
@@ -8470,7 +8482,12 @@ def build(registry: dict) -> dict:
     # declared here, and validate_sase_config now refuses the same pair.
     pbl_options["sase"]["constraints"]["requires_components"][
         "surface_layer"
-    ] = ["revised-mm5", "classic-mm5", "mynn", "pleim-xiu"]
+    ] = ["revised-mm5", "classic-mm5", "mynn", "pleim-xiu", "gfs"]
+    # "gfs" joined in 3.0.3, on the field contract like "mynn" below: the
+    # GFS layer writes UST, HFX, QFX and WSPD (GFS_SFCLAY_OUTPUTS), and
+    # validate_sase_config always admitted the pair.  The GFS layer's own
+    # row refused it on a claim that SASE reads MYNN-layer fields, which
+    # _run_sase does not.
     pbl_options["sase"]["constraints"]["requires_components_reasons"] = {
         "surface_layer": (
             "SASE's lower boundary condition is the surface layer's "
@@ -8500,6 +8517,14 @@ def build(registry: dict) -> dict:
     # has to be conditional or it doubles the warning on the second run.
     if _sase_mynn_warning not in pbl_options["sase"]["warnings"]:
         pbl_options["sase"]["warnings"].append(_sase_mynn_warning)
+    _sase_gfs_warning = (
+        "The GFS surface layer is admitted under SASE on the field "
+        "contract alone, as the MYNN layer is: it writes the friction "
+        "velocity, the heat and moisture fluxes and the wind speed its "
+        "friction velocity was computed against. No trajectory evidence "
+        "covers this pairing, so it is experimentable, not evidenced.")
+    if _sase_gfs_warning not in pbl_options["sase"]["warnings"]:
+        pbl_options["sase"]["warnings"].append(_sase_gfs_warning)
     # bldt IS NOT PINNED TO 0.  The required_settings row that carried it
     # was refused at plan review and at run start while
     # validate_sase_config admitted any cadence, and the driver is the
@@ -9070,18 +9095,25 @@ def build(registry: dict) -> dict:
         "constraints": {
             "required_settings": {},
             "requires_components": {
+                # "gfs" joined in 3.0.3.  WRF's GFS layer sets isfc 2
+                # (module_physics_init.F:3186-3199), so WRF runs the pair
+                # (gpuwm.wrf461_compatibility cell (8, 3), LEGAL), and it
+                # writes the UST/HFX/QFX that _run_boulac reads and nothing
+                # else.  validate_run_config always ran it; this list alone
+                # refused it, which the authority walk measured.
                 "surface_layer": [
-                    "revised-mm5", "classic-mm5", "eta-similarity"]},
+                    "revised-mm5", "classic-mm5", "eta-similarity", "gfs"]},
             "requires_components_reasons": {
                 "surface_layer": (
                     "WRF v4.6.1 runs BouLac only over a surface layer that "
                     "sets isfc 1 or 2 (phys/module_physics_init.F:3814-3816): "
-                    "the revised and classic MM5 layers and the Eta layer, "
-                    "each of which publishes the friction velocity and the "
-                    "surface heat and moisture fluxes (UST/HFX/QFX) that are "
-                    "BouLac's whole lower boundary. The MYNN layer sets isfc "
-                    "5, which WRF fatals, and with the surface layer off "
-                    "nothing writes UST/HFX/QFX at all")},
+                    "the revised and classic MM5 layers, the Eta layer and "
+                    "the GFS layer, each of which publishes the friction "
+                    "velocity and the surface heat and moisture fluxes "
+                    "(UST/HFX/QFX) that are BouLac's whole lower boundary. "
+                    "The MYNN layer sets isfc 5 and Pleim-Xiu isfc 7, which "
+                    "WRF fatals, and with the surface layer off nothing "
+                    "writes UST/HFX/QFX at all")},
         },
         "extensions": {
             "arwen_divergences": {
@@ -9270,20 +9302,28 @@ def build(registry: dict) -> dict:
     surface_options["gfs"] = {
         "asset_requirements": [],
         "constraints": {
-            "requires_components": {"pbl": ["off", "uw", "gfs"]},
+            # BouLac and SASE joined in 3.0.3.  The old reason said SASE read
+            # MYNN-layer fields; its driver reads UST/HFX/QFX/WSPD and
+            # nothing else (gpuwm/core/physics.py::_run_sase), all four in
+            # GFS_SFCLAY_OUTPUTS or the carried UST.  BouLac reads
+            # UST/HFX/QFX (_run_boulac) and WRF runs it here (isfc 2).
+            # validate_run_config ran both pairs all along; this list alone
+            # refused them, which the authority walk measured.
+            "requires_components": {"pbl": ["off", "uw", "gfs", "boulac", "sase"]},
             "requires_components_reasons": {
                 "pbl": (
                     "the GFS surface layer publishes UST, HFX, QFX, "
                     "PSIM/PSIH, GZ1OZ0, BR, WSPD and the exchange "
-                    "coefficients, and no fm/fh, MOL, ZOL or REGIME "
+                    "coefficients, and no fm/fh, MOL, ZOL, REGIME or RMOL "
                     "(phys/module_sf_gfs.F:9-18): YSU and Shin-Hong divide "
                     "by fm/fh (and WRF fatals them on isfc=2), the MYJ PBL "
                     "needs AKHS/AKMS/THZ0/QZ0/UZ0/VZ0 that only the Eta "
-                    "layer writes, and MYNN and SASE read MYNN-layer fields "
-                    "this layer leaves at their allocated values, so each "
+                    "layer writes, and MYNN and EEPS read RMOL, which this "
+                    "layer leaves at its allocated value, so each "
                     "would run on zeros -- finite, plausible and wrong. The "
-                    "GFS PBL reads this published stability set, the UW PBL reads UST/HFX/QFX only, and PBL-off reads "
-                    "nothing")},
+                    "GFS PBL reads this published stability set; the UW PBL "
+                    "and BouLac read UST/HFX/QFX only and SASE "
+                    "UST/HFX/QFX/WSPD; PBL-off reads nothing")},
         },
         "consumers": {
             "restart_algorithm_identity": (

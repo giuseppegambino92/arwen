@@ -3,7 +3,7 @@
 Breakage it prevents (WOOF gate t2rect-gate1, 2026-11-11): every build of a
 sub-km grid's land cover read the 2.28 GB CGLC-MODIS-LCZ GeoTIFF in full three
 times to check it against its sidecar and pins (4.2 s of a 5.1 s build on
-a test host), and a domain tree builds each grid twice.
+an RTX 4090 test host), and a domain tree builds each grid twice.
 """
 from __future__ import annotations
 

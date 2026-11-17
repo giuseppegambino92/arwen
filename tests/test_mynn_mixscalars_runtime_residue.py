@@ -47,7 +47,11 @@ def _run_capture():
         nx=8, ny=6, nz=50, dx=3000.0, dy=3000.0, ztop=16000.0,
         dt=12.0, run_seconds=0.0, time_step_sound=4, moist=True,
         mp_physics=28, sf_sfclay_physics=5, sf_surface_physics=2,
-        bl_pbl_physics=5, bldt=0.0, bl_mynn_mixscalars=1)
+        bl_pbl_physics=5, bldt=0.0, bl_mynn_mixscalars=1,
+        # The CPU reference these tests replay is the WRF 4.6.1 unit, so the
+        # capture runs WRF's own lines: correct-mode MY1 and ML1 (on by
+        # default from 3.0.3) are named off here.
+        mynn_fixes_v61=False, mynn_boulac_down_sign=False)
     validate_run_config(cfg)
 
     def theta(z):

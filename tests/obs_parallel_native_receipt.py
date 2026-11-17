@@ -16,7 +16,7 @@ from gpuwm.obs.dealias import DealiasParams
 from gpuwm.obs.radar_grid import write_radar_grid
 from gpuwm.obs.superob import SuperobParams, merge_contributions, superob_volume
 from gpuwm.timeline.ledger import Ledger, span
-from tools.da_recent_observations import ObservationRss, require_native_observations
+from tools.nexrad_archive import ObservationRss, require_native_observations
 from test_obs_superob_rust_parity import _grid, _volume, ACCUMULATORS, FIELDS
 
 

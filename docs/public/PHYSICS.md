@@ -464,14 +464,10 @@ missing -- and `validate_physics_plan` mirrors it as
 `consumer-row-missing`.  After the registry carries every row this gate is
 silent; it exists so the next missing row costs a launch, never a run.
 
-One row is outside a `RunConfig`'s field of view: a run configuration
-carries no data-assimilation settings, so `validate_run_config` cannot
-ask whether the active scheme has a radar H(x).  The DA door asks it
-itself, at its own plan review: `RadarAssimilationConfig` reads the
-`radar_da` row when a cycle is configured and refuses, before the first
-analysis, a scheme whose clear-air floor is unread or whose reflectivity
-has no H(x) route, naming the scheme, the reason and the way out
-(velocity-only assimilation, or a scheme with a routed operator).
+One row is outside a `RunConfig`'s field of view: the `radar_da` row
+(each scheme's clear-air floor and reflectivity H(x) route) was read by the
+local data assimilation, which gpuwm 3.0.3 removed. The row is still
+published.
 
 One row publishes a decision rather than a capability, and the receipts
 say so: a scheme whose clear-air floor nobody has read yet
@@ -768,21 +764,17 @@ variant; nothing has to be switched.
 **Reflectivity** comes from the scheme itself: WRF binds its `Zet` output
 straight to `refl_10cm`, so a history frame carries Milbrandt-Yau's own
 dBZ rather than ArWen's generic radar operator. That block updates
-nothing, so it is also available as an observation operator: radar
-assimilation simulates mp=9 reflectivity by running the scheme's own Z on
-the background, and the two are held bitwise equal by a gate. Its
-clear-air floor is **-99 dBZ**, not the -35 the WSM6/Thompson/Morrison
-family floors at, so a clear-air observation assimilated against an mp=9
-H(x) must carry the matching floor; the DA door reads it from the scheme
-and refuses a mismatch rather than manufacturing a 64 dB innovation.
+nothing, so it is also available as an observation operator: the
+simulated-reflectivity operator runs the scheme's own Z on a state, and the
+two are held bitwise equal by a gate. Its clear-air floor is **-99 dBZ**,
+not the -35 the WSM6/Thompson/Morrison family floors at.
 
 **What else mp=9 reaches.** A Milbrandt-Yau domain checkpoints and
 resumes; it nests under, or over, a domain running a different scheme;
 the edge diagnoses the child's twelve moments with the scheme's own
 mass-to-number consistency block, which is the same block the scheme
 would run on its first step, so nothing is invented and nothing is
-borrowed from another scheme; a LETKF analysis knows its six mass/number
-pairs; and the offline downscale lane reads a Milbrandt-Yau parent
+borrowed from another scheme; and the offline downscale lane reads a Milbrandt-Yau parent
 archive for a Milbrandt-Yau child. Changing microphysics between an
 offline parent and its child is a different question and is refused by
 name at that lane. What is still refused is the RTE+RRTMGP pairing above
@@ -3334,15 +3326,7 @@ report carries a `radiation.downward_longwave` line naming which of the
 three it is.
 
 **No door emits an asymmetric pairing as a default.** That includes the
-HRRR route, which was the exception through 1.7.1, and the radar-DA
-storm nowcast (`tools/da_nowcast.py` and the auto/launcher doors), which
-was the exception through 1.8.7 --- it defaulted to
-`wsm6-ysu-mm5-noah-no-radiation-v1` on cases that are mostly nocturnal,
-and now defaults to the HRRR route's own
-`thompson-mp8-ysu-mm5-noah-rte-rrtmgp-v1`, because the nowcast's
-background is HRRR. That costs more per member than a Dudhia-only call,
-so a member count or VRAM plan measured before 1.8.8 has to be
-re-measured rather than extrapolated.
+HRRR route, which was the exception through 1.7.1.
 
 The HRRR route's default was `wsm6-ysu-mm5-noah-no-radiation-v1` because
 every full-radiation suite the route's physics gate admits is an mp8 suite,

@@ -533,6 +533,16 @@ DEFAULT_TOLERANT_IDENTITY_FIELDS = frozenset({
     # SN1 (2.9.14), Noah-MP snowmelt reset: a step-time key; an older tree
     # was prepared before it existed and preparation never reads it.
     "run.noahmp_melt_reset_esat",
+    # MY1 (3.0.3), the MYNN v6.1 fixes, now on by default: a step-time key;
+    # a tree prepared while it defaulted off never recorded it, and
+    # preparation never reads it.
+    "run.mynn_fixes_v61",
+    # ML1 (3.0.3), MYNN BouLac downward length sign: a step-time key;
+    # preparation never reads it.
+    "run.mynn_boulac_down_sign",
+    # ML1's second key (3.0.3), the BouLac and k-epsilon PBL length sign:
+    # step-time; preparation never reads it.
+    "run.pbl_boulac_down_sign",
     # The New SAS knobs (cu_physics = 96 port), on the p3_backend argument
     # below: scheme-scoped (gpuwm.config refuses a non-default value under
     # any other cumulus scheme), so a tree prepared before they existed

@@ -2018,6 +2018,11 @@ fn build_windowed_render_request(
     ) {
         render_request.legend.mode = LegendMode::Stepped;
     }
+    if product.is_qpf() {
+        // One listed colour per band, every band the same length on the bar
+        // (`crate::qpf::qpf_inches_scale` names the breakage).
+        render_request.legend.mode = crate::qpf::qpf_legend_mode();
+    }
     render_request.projected_domain = Some(rustwx_render::ProjectedDomain {
         x: projected.projected_x.clone(),
         y: projected.projected_y.clone(),
